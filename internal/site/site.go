@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"net/url"
+	"strings"
 
 	"github.com/janit/viiwork-parrot/internal/catalog"
 	"github.com/janit/viiwork-parrot/internal/mktorrent"
@@ -37,10 +39,14 @@ type Options struct {
 
 const defaultRepoURL = "https://github.com/janit/viiwork-parrot"
 
+// defaultSiteHost is shown in the page subtitle when no https:// tracker is
+// configured to derive one from.
+const defaultSiteHost = "parrot.lnx.fi"
+
 type fileView struct {
 	DiskName    string
 	Size        string
-	Magnet      string
+	Magnet      template.URL
 	TorrentHref string
 	SHA256      string
 	ShortSHA256 string
@@ -53,16 +59,35 @@ type modelView struct {
 	ShortRevision string
 	HFTreeURL     string
 	License       string
+	LicenseURL    string
 	TotalSize     string
 	Files         []fileView
+
+	// Folder models (layout: dir): one torrent for the whole directory, and
+	// a plain file list (no per-file links) that the page keeps collapsed.
+	IsDir       bool
+	FileCount   int
+	Magnet      template.URL
+	TorrentHref string
+	DirFiles    []dirFileView
+}
+
+type dirFileView struct {
+	Path        string
+	Size        string
+	SHA256      string
+	ShortSHA256 string
 }
 
 type pageData struct {
 	RepoURL   string
 	PubKey    string
+	SiteHost  string
 	Trackers  []string
 	Generated string
 	Models    []modelView
+	FileCount int
+	TotalSize string
 }
 
 // Render writes the static landing page for c to w, using opts (with
@@ -83,18 +108,59 @@ func Render(w io.Writer, c *catalog.Catalog, opts Options) error {
 	data := pageData{
 		RepoURL:  opts.RepoURL,
 		PubKey:   opts.PubKey,
+		SiteHost: siteHost(opts.Trackers),
 		Trackers: opts.Trackers,
 	}
 	if c != nil {
 		data.Generated = c.Generated.UTC().Format("2006-01-02 15:04:05 UTC")
+		var totalSize int64
 		for _, m := range c.Models {
 			data.Models = append(data.Models, newModelView(m))
+			data.FileCount += len(m.Files)
+			totalSize += m.TotalSize()
 		}
+		data.TotalSize = humanSize(totalSize)
 	}
 	return page.Execute(w, data)
 }
 
+// siteHost picks the announce host shown in the page subtitle: the host of
+// the first https:// tracker (viiwork-parrot's own, as opposed to the
+// third-party udp:// trackers also listed), or defaultSiteHost if none.
+func siteHost(trackers []string) string {
+	for _, t := range trackers {
+		if !strings.HasPrefix(t, "https://") {
+			continue
+		}
+		if u, err := url.Parse(t); err == nil && u.Host != "" {
+			return u.Host
+		}
+	}
+	return defaultSiteHost
+}
+
 func newModelView(m catalog.Model) modelView {
+	if m.IsDir() {
+		files := make([]dirFileView, 0, len(m.Files))
+		for _, f := range m.Files {
+			files = append(files, dirFileView{Path: f.Name, Size: humanSize(f.Size), SHA256: f.SHA256, ShortSHA256: shortHex(f.SHA256, 12)})
+		}
+		return modelView{
+			ID:            m.ID,
+			HFRepo:        m.HFRepo,
+			Revision:      m.Revision,
+			ShortRevision: shortHex(m.Revision, 7),
+			HFTreeURL:     fmt.Sprintf("https://huggingface.co/%s/tree/%s", m.HFRepo, m.Revision),
+			License:       m.License,
+			LicenseURL:    m.LicenseURL,
+			TotalSize:     humanSize(m.TotalSize()),
+			IsDir:         true,
+			FileCount:     len(m.Files),
+			Magnet:        magnetURL(m.Magnet),
+			TorrentHref:   "torrents/" + m.InfoHash + ".torrent",
+			DirFiles:      files,
+		}
+	}
 	var total int64
 	files := make([]fileView, 0, len(m.Files))
 	for _, f := range m.Files {
@@ -102,7 +168,7 @@ func newModelView(m catalog.Model) modelView {
 		files = append(files, fileView{
 			DiskName:    f.DiskName(),
 			Size:        humanSize(f.Size),
-			Magnet:      f.Magnet,
+			Magnet:      magnetURL(f.Magnet),
 			TorrentHref: "torrents/" + f.InfoHash + ".torrent",
 			SHA256:      f.SHA256,
 			ShortSHA256: shortHex(f.SHA256, 12),
@@ -115,9 +181,21 @@ func newModelView(m catalog.Model) modelView {
 		ShortRevision: shortHex(m.Revision, 7),
 		HFTreeURL:     fmt.Sprintf("https://huggingface.co/%s/tree/%s", m.HFRepo, m.Revision),
 		License:       m.License,
+		LicenseURL:    m.LicenseURL,
 		TotalSize:     humanSize(total),
 		Files:         files,
 	}
+}
+
+// magnetURL marks a catalog magnet as a safe URL for href attributes:
+// html/template only trusts http(s)/mailto and would otherwise replace a
+// magnet: link with "#ZgotmplZ". Only magnet:? URIs (all catalog.Validate
+// accepts) are passed through.
+func magnetURL(m string) template.URL {
+	if !strings.HasPrefix(m, "magnet:?") {
+		return ""
+	}
+	return template.URL(m)
 }
 
 func shortHex(s string, n int) string {

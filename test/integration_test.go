@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -108,6 +109,67 @@ func (w *world) add(id string, size int, serve string) {
 	})
 }
 
+// addDir registers a folder model (layout: dir) whose files are served by
+// fake HF at their real BEP-19 web-seed paths:
+// https://huggingface.co/o/<id>/resolve/<revision>/<path>. The catalog
+// requires exactly that web-seed, so a node only reaches the fake server
+// through dialHF.
+func (w *world) addDir(id string, files map[string]int) string {
+	root := w.t.TempDir()
+	rev := strings.Repeat("b", 40)
+	repo := "o/" + id
+	var names []string
+	for rel, size := range files {
+		data := make([]byte, size)
+		rand.Read(data)
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, data, 0o644)
+		w.hfFiles["/"+repo+"/resolve/"+rev+"/"+rel] = data
+		names = append(names, rel)
+	}
+	r, err := mktorrent.BuildDir(mktorrent.DirOptions{
+		Root: root, Name: rev, DisplayName: id, Files: names, WebSeed: catalog.DirWebSeed(repo),
+		Announce: [][]string{{"http://127.0.0.1:1/announce"}},
+	})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	info, _ := r.MetaInfo.UnmarshalInfo()
+	m := catalog.Model{ID: id, HFRepo: repo, Revision: rev, License: "mit", Layout: catalog.LayoutDir, InfoHash: r.InfoHash, Magnet: r.Magnet}
+	for _, f := range info.Files {
+		rel := strings.Join(f.Path, "/")
+		sum, _ := hashcache.HashFile(filepath.Join(root, filepath.FromSlash(rel)))
+		m.Files = append(m.Files, catalog.File{Name: rel, Size: f.Length, SHA256: sum})
+	}
+	var buf bytes.Buffer
+	r.MetaInfo.Write(&buf)
+	w.catFS["/torrents/"+r.InfoHash+".torrent"] = buf.Bytes()
+	w.models = append(w.models, m)
+	return root
+}
+
+// dialHF points huggingface.co:443 at the fake HF server for nodes created
+// during test t (nodes clone http.DefaultTransport when they start); t's
+// cleanup restores the transport. The fake server's test
+// certificate is valid for example.com, so TLS verifies against that name.
+func (w *world) dialHF(t *testing.T) {
+	dt := http.DefaultTransport.(*http.Transport)
+	prevDial, prevTLS := dt.DialContext, dt.TLSClientConfig
+	addr := w.hf.Listener.Addr().String()
+	d := &net.Dialer{Timeout: 5 * time.Second}
+	dt.DialContext = func(ctx context.Context, network, a string) (net.Conn, error) {
+		if a == "huggingface.co:443" {
+			a = addr
+		}
+		return d.DialContext(ctx, network, a)
+	}
+	tc := prevTLS.Clone()
+	tc.ServerName = "example.com"
+	dt.TLSClientConfig = tc
+	t.Cleanup(func() { dt.DialContext, dt.TLSClientConfig = prevDial, prevTLS })
+}
+
 // hfRequests reports how many requests the fake HF server has received for
 // path so far.
 func (w *world) hfRequests(path string) int {
@@ -196,6 +258,11 @@ func TestEndToEnd(t *testing.T) {
 	w.add("ws", 4<<20, "ok")        // reachable only via web-seed
 	w.add("p2p", 3<<20, "none")     // reachable only via peers
 	w.add("bad", 2<<20, "tampered") // web-seed serves corrupted bytes
+	dirFiles := map[string]int{
+		"config.json": 311, "model-00001-of-00002.safetensors": 3<<20 + 9,
+		"model-00002-of-00002.safetensors": 1<<20 + 1, "inference/sub dir/a b+c.py": 777,
+	}
+	dirSrc := w.addDir("folder", dirFiles) // a folder model (layout: dir)
 	w.publish()
 
 	t.Run("web-seed download via ensure", func(t *testing.T) {
@@ -204,6 +271,27 @@ func TestEndToEnd(t *testing.T) {
 		got, _ := os.ReadFile(filepath.Join(tn.cfg.Node.DataDir, "ws.gguf"))
 		if !bytes.Equal(got, w.sources["ws"]) {
 			t.Fatal("web-seed download corrupted")
+		}
+	})
+
+	t.Run("folder model web-seed download via ensure", func(t *testing.T) {
+		w.dialHF(t)
+		tn := w.node(t, nil, nil, 0, nil)
+		waitSeeding(t, tn, "folder", 60*time.Second)
+		resp, code, err := tn.api.Ensure(context.Background(), "folder")
+		want := filepath.Join(tn.cfg.Node.DataDir, "folder")
+		if err != nil || code != http.StatusOK || resp.Path != want {
+			t.Fatalf("ensure: %d %+v %v (want path %s)", code, resp, err, want)
+		}
+		for rel := range dirFiles {
+			a, _ := os.ReadFile(filepath.Join(dirSrc, filepath.FromSlash(rel)))
+			b, err := os.ReadFile(filepath.Join(want, filepath.FromSlash(rel)))
+			if err != nil || !bytes.Equal(a, b) {
+				t.Fatalf("%s: %v", rel, err)
+			}
+		}
+		if w.hfRequests("/o/folder/resolve/"+strings.Repeat("b", 40)+"/inference/sub dir/a b+c.py") == 0 {
+			t.Fatal("expected the BEP-19 resolve/<revision>/<path> request")
 		}
 	})
 

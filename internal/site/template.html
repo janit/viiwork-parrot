@@ -7,208 +7,187 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%9C%3C/text%3E%3C/svg%3E">
 <meta name="description" content="Signed manifest of the models viiwork-parrot seeds: magnet links, per-file torrents, and the ed25519 key to verify them.">
 <style>
-  :root{
-    --bg:#eef1ec;
-    --bg-panel:#e3e8dd;
-    --bg-panel-2:#dbe1d4;
-    --band:#132228;
-    --band-text:#eef1ec;
-    --text:#182422;
-    --text-dim:#51605a;
-    --line:#c6cec0;
-    --accent:#8a4e1c;
-    --accent-strong:#6e3d14;
-    --verified:#2b6b49;
-    --mono-bg:#e2e7da;
-    --mono-text:#20302a;
-    --focus:#1c6e8c;
-    --radius:3px;
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    background: #0d1117;
+    color: #c9d1d9;
+    padding: 24px;
+    line-height: 1.5;
   }
-  @media (prefers-color-scheme: dark){
-    :root{
-      --bg:#101a1c;
-      --bg-panel:#16232a;
-      --bg-panel-2:#1c2c30;
-      --band:#0a1315;
-      --band-text:#eef1ec;
-      --text:#dee6e1;
-      --text-dim:#93a49c;
-      --line:#2b3d3e;
-      --accent:#e2a458;
-      --accent-strong:#f1bd7c;
-      --verified:#79cc9e;
-      --mono-bg:#0e1a1b;
-      --mono-text:#c9dcd3;
-      --focus:#63c1e6;
+  .wrap { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; color: #58a6ff; }
+  .subtitle { color: #8b949e; font-size: 0.85rem; margin: 0 0 16px; }
+  h2 { font-size: 1.1rem; margin: 28px 0 10px; color: #8b949e; }
+  section > .sub { color: #8b949e; margin: -4px 0 14px; font-size: 0.85rem; }
+  a { color: #58a6ff; }
+  a:hover { color: #79c0ff; }
+  a:focus-visible, summary:focus-visible, details:focus-visible {
+    outline: 2px solid #58a6ff;
+    outline-offset: 2px;
+  }
+  code, .mono { font-family: inherit; font-size: 0.92em; }
+  code {
+    background: #161b22;
+    color: #c9d1d9;
+    padding: .1em .35em;
+    border-radius: 4px;
+    word-break: break-all;
+  }
+
+  .summary { display: flex; gap: 10px 24px; margin-bottom: 4px; font-size: 0.9rem; flex-wrap: wrap; }
+  .summary span { color: #8b949e; }
+  .summary strong { color: #c9d1d9; }
+
+  .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; background: #3fb950; }
+
+  .models { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+  .model-tag {
+    display: inline-block;
+    background: #1f6feb22;
+    border: 1px solid #1f6feb;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.85rem;
+    color: #58a6ff;
+    text-decoration: none;
+  }
+  .model-tag:hover { background: #1f6feb3a; color: #79c0ff; }
+
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+  article.model { background: #161b22; border: 1px solid #30363d; border-radius: 6px; margin-bottom: 16px; overflow: hidden; scroll-margin-top: 16px; }
+  article.model .model-head { padding: 16px 16px 12px; border-bottom: 1px solid #21262d; }
+  article.model h3 { font-size: 1.05rem; font-weight: 600; color: #c9d1d9; }
+  dl.meta { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 8px 0 0; align-items: center; }
+  dl.meta > div { display: flex; gap: .4em; align-items: baseline; }
+  dl.meta dt { color: #8b949e; font-size: 0.85rem; }
+  dl.meta dd { margin: 0; }
+
+  table.files { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  table.files th, table.files td { text-align: left; padding: 6px 12px; vertical-align: top; }
+  table.files thead th { color: #8b949e; font-weight: 500; font-size: 0.85rem; border-bottom: 1px solid #21262d; }
+  table.files tbody tr { border-bottom: 1px solid #21262d; }
+  table.files tbody tr:last-child { border-bottom: none; }
+  table.files td code { background: transparent; padding: 0; }
+  .links { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .links a { white-space: nowrap; }
+  details.copy { margin-top: .35rem; }
+  details.copy summary { cursor: pointer; color: #8b949e; font-size: 0.78rem; }
+  details.copy code { display: block; margin-top: .3rem; overflow-wrap: anywhere; white-space: pre-wrap; }
+
+  details.filelist { border-top: 1px solid #21262d; padding: 10px 16px; }
+  details.filelist summary { cursor: pointer; color: #8b949e; font-size: 0.85rem; }
+  ul.dirfiles { margin-top: 8px; font-size: 0.82rem; }
+  ul.dirfiles li { padding: .15rem 0; overflow-wrap: anywhere; }
+  ul.dirfiles code { background: transparent; padding: 0; }
+  .dim { color: #8b949e; }
+
+  pre {
+    background: #161b22;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    padding: .9rem 1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.88rem;
+  }
+  ul.plain { list-style: none; }
+  ul.trackers li { display: flex; align-items: center; flex-wrap: wrap; row-gap: 2px; font-size: 0.88rem; padding: 6px 0; border-bottom: 1px solid #21262d; }
+  ul.trackers li:last-child { border-bottom: none; }
+  ul.trackers code { overflow-wrap: anywhere; word-break: normal; }
+
+  dl.integrity div { margin-block: .6rem; }
+  dl.integrity dt { color: #8b949e; font-size: 0.85rem; margin-bottom: .15rem; }
+  dl.integrity dd { margin: 0; }
+  .verified { color: #3fb950; font-weight: 600; }
+
+  #footer { margin-top: 32px; padding-top: 16px; border-top: 1px solid #21262d; color: #484f58; font-size: 0.75rem; }
+  #footer p { margin: .3em 0; }
+  #footer a { color: #6e7681; }
+
+  @media (max-width: 640px) {
+    table.files thead { position: absolute; left: -9999px; top: -9999px; }
+    table.files, table.files tbody, table.files tr, table.files td { display: block; width: 100%; }
+    table.files tr { padding: .7rem 0; }
+    table.files td { padding: .2rem 0; }
+    table.files td::before {
+      content: attr(data-label);
+      display: block;
+      font-size: .72rem;
+      color: #8b949e;
     }
-  }
-  *{box-sizing:border-box}
-  html{-webkit-text-size-adjust:100%}
-  body{
-    margin:0;
-    background:var(--bg);
-    color:var(--text);
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    line-height:1.55;
-    font-size:16px;
-  }
-  h1,h2,h3{
-    font-family:Georgia,"Iowan Old Style","Palatino Linotype","Book Antiqua",serif;
-    font-weight:600;
-    line-height:1.2;
-    margin:0 0 .4em;
-  }
-  a{color:var(--accent)}
-  a:hover{color:var(--accent-strong)}
-  a:focus-visible,summary:focus-visible,details:focus-visible{
-    outline:2px solid var(--focus);
-    outline-offset:2px;
-  }
-  code,.mono{
-    font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,"Liberation Mono",monospace;
-    font-size:.92em;
-  }
-  code{
-    background:var(--mono-bg);
-    color:var(--mono-text);
-    padding:.1em .35em;
-    border-radius:var(--radius);
-    word-break:break-all;
-  }
-  .wrap{max-width:52rem;margin:0 auto;padding-inline:1.25rem}
-
-  header.band, footer.band{
-    background:var(--band);
-    color:var(--band-text);
-    padding-block:2.2rem;
-  }
-  header.band{padding-bottom:2.4rem}
-  header.band h1{font-size:clamp(1.6rem,4vw,2.1rem);color:var(--band-text)}
-  header.band .tagline{
-    max-width:38rem;
-    color:#c7d2cc;
-    font-size:1rem;
-  }
-  header.band .tagline a{color:#e6c398}
-  header.band .tagline a:hover{color:#f2d8ae}
-
-  main{padding-block:2.5rem 1rem}
-  section{margin-block:2.75rem}
-  section > h2{font-size:1.5rem}
-  section > .sub{color:var(--text-dim);margin:-.2em 0 1.1em;font-size:.95rem}
-
-  article.model{
-    border:1px solid var(--line);
-    border-radius:var(--radius);
-    background:var(--bg-panel);
-    margin-block-end:1.5rem;
-    overflow:hidden;
-  }
-  article.model .model-head{
-    padding:1rem 1.1rem .9rem;
-    border-bottom:1px solid var(--line);
-  }
-  article.model h3{
-    font-size:1.15rem;
-    font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
-    font-weight:600;
-  }
-  dl.meta{
-    display:flex;
-    flex-wrap:wrap;
-    gap:.3rem 1.6rem;
-    margin:.5rem 0 0;
-  }
-  dl.meta > div{display:flex;gap:.4em;align-items:baseline}
-  dl.meta dt{color:var(--text-dim);font-size:.85rem}
-  dl.meta dd{margin:0}
-
-  table.files{width:100%;border-collapse:collapse;font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;font-size:.88rem}
-  table.files th, table.files td{padding:.55rem .9rem;text-align:left;vertical-align:top}
-  table.files thead th{
-    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    font-size:.78rem;
-    color:var(--text-dim);
-    font-weight:600;
-    border-bottom:1px solid var(--line);
-  }
-  table.files tbody tr + tr td{border-top:1px solid var(--line)}
-  table.files td code{background:transparent;padding:0}
-  .links{display:flex;gap:1rem;flex-wrap:wrap}
-  .links a{white-space:nowrap}
-  details.copy{margin-top:.35rem}
-  details.copy summary{cursor:pointer;color:var(--text-dim);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:.78rem}
-  details.copy code{display:block;margin-top:.3rem;overflow-wrap:anywhere;white-space:pre-wrap}
-
-  pre{
-    background:var(--mono-bg);
-    color:var(--mono-text);
-    padding:.9rem 1rem;
-    border-radius:var(--radius);
-    overflow-x:auto;
-    font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
-    font-size:.88rem;
-  }
-  ul.plain{list-style:none;margin:0;padding:0}
-  ul.trackers li{
-    font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
-    font-size:.88rem;
-    padding:.3rem 0;
-    border-bottom:1px solid var(--line);
-  }
-  ul.trackers li:last-child{border-bottom:none}
-
-  dl.integrity{margin:0}
-  dl.integrity div{margin-block:.6rem}
-  dl.integrity dt{color:var(--text-dim);font-size:.85rem;margin-bottom:.15rem}
-  dl.integrity dd{margin:0}
-  .verified{color:var(--verified);font-weight:600}
-
-  footer.band{margin-top:3rem;font-size:.85rem;color:#a9b6b0}
-  footer.band a{color:#cfd9d2}
-  footer.band p{margin:.3em 0}
-
-  @media (max-width:640px){
-    table.files thead{position:absolute;left:-9999px;top:-9999px}
-    table.files, table.files tbody, table.files tr, table.files td{display:block;width:100%}
-    table.files tr{padding:.7rem .9rem;border-top:1px solid var(--line)}
-    table.files tr:first-child{border-top:none}
-    table.files td{padding:.2rem 0}
-    table.files td::before{
-      content:attr(data-label);
-      display:block;
-      font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-      font-size:.72rem;
-      color:var(--text-dim);
-    }
-    dl.meta{gap:.2rem .9rem}
+    dl.meta { gap: .3rem .9rem; }
+    .summary { gap: 4px 16px; }
+    ul.trackers li .dim { display: block; margin-left: 18px; }
   }
 </style>
 </head>
 <body>
-<header class="band">
-  <div class="wrap">
-    <h1>🦜 viiwork-parrot</h1>
-    <p class="tagline">A self-hosted BitTorrent tracker for viiwork's models. It seeds viiwork's own mesh first, but the swarm is open to anyone — a companion to <a href="https://pirateface.co/">Pirate Face</a>.</p>
-  </div>
-</header>
+<div class="wrap">
 
-<main class="wrap">
+  <h1>🦜 viiwork-parrot</h1>
+  <p class="subtitle">{{.SiteHost}} &middot; model tracker &middot; {{len .Models}} model{{if ne (len .Models) 1}}s{{end}}</p>
+
+  <div class="summary">
+    <div><span>Models:</span> <strong>{{len .Models}}</strong></div>
+    <div><span>Files:</span> <strong>{{.FileCount}}</strong></div>
+    <div><span>Total:</span> <strong>{{.TotalSize}}</strong></div>
+    <div><span>Catalog:</span> <strong>generated {{.Generated}}</strong></div>
+    <div><span>Signed:</span> <strong>ed25519</strong></div>
+  </div>
+
+  <p class="subtitle" style="margin-top:8px">A self-hosted BitTorrent tracker for viiwork's models. It seeds viiwork's own mesh first, but the swarm is open to anyone &mdash; a companion to <a href="https://pirateface.co/">Pirate Face</a>.</p>
 
   <section id="manifest">
-    <h2>Manifest</h2>
-    <p class="sub">{{len .Models}} model{{if ne (len .Models) 1}}s{{end}}, generated {{.Generated}}.</p>
+    <h2>Models</h2>
+    <div class="models">
+      {{range .Models}}<a class="model-tag" href="#model-{{.ID}}">{{.ID}}</a>
+      {{end}}
+    </div>
 
     {{range .Models}}
-    <article class="model">
+    <article class="model" id="model-{{.ID}}">
       <div class="model-head">
         <h3>{{.ID}}</h3>
         <dl class="meta">
           <div><dt>source</dt><dd><a href="{{.HFTreeURL}}">{{.HFRepo}}</a> <code>{{.ShortRevision}}</code></dd></div>
-          <div><dt>license</dt><dd>{{.License}}</dd></div>
+          <div><dt>license</dt><dd>{{if .LicenseURL}}<a class="model-tag" href="{{.LicenseURL}}">{{.License}}</a>{{else}}<span class="model-tag">{{.License}}</span>{{end}}</dd></div>
           <div><dt>size</dt><dd>{{.TotalSize}}</dd></div>
+          {{if .IsDir}}<div><dt>layout</dt><dd>folder, {{.FileCount}} file{{if ne .FileCount 1}}s{{end}}</dd></div>{{end}}
         </dl>
       </div>
+      {{if .IsDir}}
+      <table class="files">
+        <thead>
+          <tr><th>folder</th><th>size</th><th>get</th><th>revision</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-label="folder"><code>{{.ID}}/</code> &middot; {{.FileCount}} file{{if ne .FileCount 1}}s{{end}}</td>
+            <td data-label="size">{{.TotalSize}}</td>
+            <td data-label="get">
+              <span class="links">
+                <a href="{{.Magnet}}">magnet</a>
+                <a href="{{.TorrentHref}}">.torrent</a>
+              </span>
+              <details class="copy">
+                <summary>copy magnet</summary>
+                <code>{{.Magnet}}</code>
+              </details>
+            </td>
+            <td data-label="revision"><code title="{{.Revision}}">{{.ShortRevision}}</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <details class="filelist">
+        <summary>{{.FileCount}} file{{if ne .FileCount 1}}s{{end}} in the folder (one torrent; paths as on Hugging Face)</summary>
+        <ul class="plain dirfiles">
+          {{range .DirFiles}}<li><code>{{.Path}}</code> <span class="dim">{{.Size}} &middot; sha256 <span title="{{.SHA256}}">{{.ShortSHA256}}&hellip;</span></span></li>
+          {{end}}
+        </ul>
+      </details>
+      {{else}}
       <table class="files">
         <thead>
           <tr><th>file</th><th>size</th><th>get</th><th>sha256</th></tr>
@@ -238,54 +217,55 @@
           {{end}}
         </tbody>
       </table>
+      {{end}}
     </article>
     {{end}}
   </section>
 
   <section id="how-to-use">
     <h2>Getting the files</h2>
-    <p>Open a magnet link in any BitTorrent client. Each one carries a Hugging Face web seed, so the download starts immediately even with zero peers on the swarm.</p>
-    <p>Or point a running <code>viiwork-parrot</code> node at a model and let it do the rest:</p>
+    <p>Open a magnet link in any BitTorrent client. A folder model is a single torrent that recreates the Hugging Face repository layout in one directory (a BitTorrent client names that directory after the revision; point vLLM or SGLang at it). Each magnet carries a Hugging Face web seed, so the download starts immediately even with zero peers on the swarm.</p>
+    <p style="margin-top:.6em">Or point a running <code>viiwork-parrot</code> node at a model and let it do the rest:</p>
     <pre><code>models:
   want: [{{if .Models}}{{(index .Models 0).ID}}{{else}}model-id{{end}}]</code></pre>
-    <p>It downloads every file, verifies each sha256, and starts seeding automatically. Source and setup instructions live at <a href="{{.RepoURL}}">{{.RepoURL}}</a>.</p>
+    <p style="margin-top:.6em">It downloads every file, verifies each sha256, and starts seeding automatically. Source and setup instructions live at <a href="{{.RepoURL}}">{{.RepoURL}}</a>.</p>
   </section>
 
   <section id="trackers">
     <h2>Trackers</h2>
-    <p>Every torrent above announces to:</p>
+    <p class="sub">Every torrent above announces to:</p>
     <ul class="plain trackers">
-      {{range .Trackers}}<li><code>{{.}}</code></li>
+      {{range .Trackers}}<li><span class="status"></span><code>{{.}}</code> <span class="dim">&nbsp;announce URL</span></li>
       {{end}}
     </ul>
   </section>
 
   <section id="integrity">
     <h2>Verifying the manifest</h2>
-    <p>This page is generated from <code>catalog.json</code>, which is <span class="verified">ed25519-signed</span> so a node — or you — can confirm nobody tampered with it in transit.</p>
-    <dl class="integrity">
-      <div>
-        <dt>catalog</dt>
-        <dd><a href="catalog.json">catalog.json</a> and its <a href="catalog.json.sig">signature</a></dd>
-      </div>
-      <div>
-        <dt>public key</dt>
-        <dd><code>{{.PubKey}}</code></dd>
-      </div>
-      <div>
-        <dt>generated</dt>
-        <dd>{{.Generated}}</dd>
-      </div>
-    </dl>
+    <div class="card">
+      <p>This page is generated from <code>catalog.json</code>, which is <span class="verified">ed25519-signed</span> so a node &mdash; or you &mdash; can confirm nobody tampered with it in transit.</p>
+      <dl class="integrity" style="margin-top:12px">
+        <div>
+          <dt>catalog</dt>
+          <dd><a href="catalog.json">catalog.json</a> and its <a href="catalog.json.sig">signature</a></dd>
+        </div>
+        <div>
+          <dt>public key</dt>
+          <dd><code>{{.PubKey}}</code></dd>
+        </div>
+        <div>
+          <dt>generated</dt>
+          <dd>{{.Generated}}</dd>
+        </div>
+      </dl>
+    </div>
   </section>
 
-</main>
-
-<footer class="band">
-  <div class="wrap">
+  <div id="footer">
     <p>Generated by viiwork-parrot from its signed catalog. Verify a file's sha256 before you trust it.</p>
     <p><a href="{{.RepoURL}}">{{.RepoURL}}</a></p>
   </div>
-</footer>
+
+</div>
 </body>
 </html>

@@ -5,6 +5,7 @@ package publish
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,12 +19,18 @@ import (
 
 type Options struct {
 	ID, Repo, Revision, License string
-	LocalDir                    string
-	Files                       []string
-	StoreAs                     map[string]string
-	TorrentsDir                 string
-	HF                          *hfapi.Client
-	Announce                    [][]string
+	LicenseURL                  string // optional: where the license text lives, if not in the repo
+	// Layout is "" (one single-file torrent per file) or catalog.LayoutDir
+	// (one multi-file torrent for the whole model, files at their HF paths).
+	Layout      string
+	LocalDir    string
+	Files       []string
+	All         bool // LayoutDir only: every file of the HF tree except .gitattributes
+	StoreAs     map[string]string
+	TorrentsDir string
+	HF          *hfapi.Client
+	Announce    [][]string
+	Progress    io.Writer // per-file progress lines (nil: silent)
 }
 
 func DiskName(id, hfPath string, storeAs map[string]string) string {
@@ -50,7 +57,15 @@ func AddModel(ctx context.Context, o Options) (catalog.Model, error) {
 	for _, e := range entries {
 		byPath[e.Path] = e
 	}
-	m := catalog.Model{ID: o.ID, HFRepo: o.Repo, Revision: sha, License: o.License}
+	m := catalog.Model{ID: o.ID, HFRepo: o.Repo, Revision: sha, License: o.License, LicenseURL: o.LicenseURL}
+	switch {
+	case o.Layout == catalog.LayoutDir:
+		return addDirModel(o, m, entries, byPath)
+	case o.Layout != "":
+		return m, fmt.Errorf("unknown layout %q", o.Layout)
+	case o.All:
+		return m, fmt.Errorf("--all is only for layout %s", catalog.LayoutDir)
+	}
 	for _, hfPath := range o.Files {
 		e, ok := byPath[hfPath]
 		if !ok || e.Type != "file" {

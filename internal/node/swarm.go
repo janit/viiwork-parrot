@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
@@ -153,6 +154,22 @@ func fileStorage(pc storage.PieceCompletion, dir, name string) storage.ClientImp
 		ClientBaseDir:   dir,
 		TorrentDirMaker: func(base string, _ *metainfo.Info, _ metainfo.Hash) string { return base },
 		FilePathMaker:   func(storage.FilePathMakerOpts) string { return name },
+		PieceCompletion: pc,
+		UsePartFiles:    g.Some(false),
+	})
+}
+
+// dirStorage stores a folder model's multi-file torrent under root, each
+// file at root/<its path in the torrent> (the HF path), whatever the
+// torrent's info.name (the HF revision). Never Close the result: that
+// closes the shared piece-completion DB.
+func dirStorage(pc storage.PieceCompletion, root string) storage.ClientImpl {
+	return storage.NewFileOpts(storage.NewFileClientOpts{
+		ClientBaseDir:   root,
+		TorrentDirMaker: func(base string, _ *metainfo.Info, _ metainfo.Hash) string { return base },
+		FilePathMaker: func(o storage.FilePathMakerOpts) string {
+			return filepath.Join(o.File.BestPath()...)
+		},
 		PieceCompletion: pc,
 		UsePartFiles:    g.Some(false),
 	})

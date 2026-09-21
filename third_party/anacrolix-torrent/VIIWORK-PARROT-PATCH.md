@@ -221,6 +221,40 @@ changes about who is allowed to touch this state or when.
    `TestDropMidDownloadDoesNotPanic` with `-count=20 -race`) to confirm the
    upstream fix covers the same scenario.
 
+## Second patch: zero-length files in multi-file torrents (v0.2.0)
+
+Folder models (one multi-file torrent per model) can contain zero-length
+files. `storage/file-torrent-io.go`'s `ReadAt`/`WriteAt` visit every file
+segment a request overlaps, including the zero-length extent of an empty
+file, and open that file for IO. With anacrolix's default mmap file IO that
+is `mmap` of length 0, which fails with `EINVAL` ("writing received chunk 0:
+invalid argument"), and anacrolix then disables data download for the whole
+torrent — the download stalls forever at 0%. The classic (pread/pwrite) IO
+the daemon selects does not hit it, but tests and anyone forcing
+`TORRENT_STORAGE_DEFAULT_FILE_IO=mmap` do.
+
+The patch skips zero-length extents in both loops (`if e.Length == 0 {
+continue }`, marked "viiwork-parrot patch"): they carry no bytes, and the
+files themselves are created when the torrent is opened
+(`CreateNativeZeroLengthFile`). `internal/node`'s folder-model tests (which
+include an empty file and run with mmap IO) cover it.
+
+### Existing zero-length files are never re-opened for writing
+
+Upstream `CreateNativeZeroLengthFile` (`storage/file-misc.go`), called for
+every zero-length file whenever a torrent is opened
+(`storage/file-client.go` `OpenTorrent`), opened the path
+`O_RDWR|O_CREATE|O_TRUNC`. viiwork-parrot seeds folders in place — adopted
+user directories, HF-cache snapshot symlinks — so this wrote to files it
+does not own: it reset their mtime/ctime (which also broke the size+mtime
+identity viiwork-parrot records for its own downloads) and would truncate a
+file that had gained content since it was verified. The patched function
+(marked "viiwork-parrot patch") returns immediately if a regular file
+(symlinks followed) already exists at the path, and otherwise creates it
+with `O_CREATE|O_EXCL` and no `O_TRUNC`.
+`TestDirSeedingLeavesEmptyFilesAlone` and `TestDirDownloadFromWebSeed` (the
+download record still matches while seeding) in `internal/node` cover it.
+
 ## What was excluded from the copy
 
 - `go.work` / `go.work.sum`: upstream's own multi-module development

@@ -51,6 +51,11 @@ func (fst fileTorrentImplIO) ReadAt(b []byte, off int64) (n int, err error) {
 	for i, e := range fst.fts.segmentLocater.LocateIter(
 		segments.Extent{off, int64(len(b))},
 	) {
+		if e.Length == 0 {
+			// viiwork-parrot patch: a zero-length file holds no bytes; with
+			// mmap file IO, opening it would fail (mmap of length 0 is EINVAL).
+			continue
+		}
 		n1, err1 := fst.readFileAt(fst.fts.file(i), b[:e.Length], e.Start)
 		n += n1
 		b = b[n1:]
@@ -79,6 +84,11 @@ func (fst fileTorrentImplIO) WriteAt(p []byte, off int64) (n int, err error) {
 	for i, e := range fst.fts.segmentLocater.LocateIter(
 		segments.Extent{off, int64(len(p))},
 	) {
+		if e.Length == 0 {
+			// viiwork-parrot patch: see ReadAt. Zero-length files are created
+			// when the torrent is opened (CreateNativeZeroLengthFile).
+			continue
+		}
 		var f fileWriter
 		f, err = fst.fts.openForWrite(fst.fts.file(i))
 		if err != nil {

@@ -43,13 +43,22 @@ func fsync(filePath string) (err error) {
 // writes will ever occur to them (no torrent data is associated with a zero-length file). The
 // caller should make sure the file name provided is safe/sanitized.
 func CreateNativeZeroLengthFile(name string) error {
+	// viiwork-parrot patch: never open an existing file for writing. Upstream
+	// opened every zero-length file O_RDWR|O_CREATE|O_TRUNC on OpenTorrent,
+	// which rewrote mtime/ctime of files that viiwork-parrot seeds in place
+	// (adopted user folders, HF-cache symlinks) and could truncate one that
+	// gained content since it was verified. An existing regular file (after
+	// following symlinks) is left as-is; otherwise the file is created
+	// exclusively, without O_TRUNC.
+	if stat, err := os.Stat(name); err == nil && stat.Mode().IsRegular() {
+		return nil
+	}
 	os.MkdirAll(filepath.Dir(name), dirPerm)
 	var f io.Closer
-	// Must request write perms to create and trunc. But we don't need those for a zero-length file.
-	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, filePerm)
+	f, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, filePerm)
 	if err != nil {
 		stat, statErr := os.Stat(name)
-		if statErr == nil && stat.Mode().IsRegular() && stat.Size() == 0 {
+		if statErr == nil && stat.Mode().IsRegular() {
 			return nil
 		}
 		return err

@@ -20,3 +20,23 @@ renders a static landing page from the signed catalog (model list, magnet and
 against) — no JavaScript, generated only from the public catalog. See
 `internal/site` for the template, and `scripts/catalog-publish.sh`, which
 generates and uploads it alongside `catalog.json` on every publish.
+
+## Folder models
+
+GGUF models are per-file: one single-file torrent per catalog file, stored
+flat in `data_dir`. Hugging Face safetensors models (dozens to hundreds of
+files, loaded by vLLM/SGLang as a directory) are published as **folder
+models** instead (`layout: dir` in `catalog.yaml`): one multi-file torrent for
+the whole model, stored as `data_dir/<model-id>/<hf path>` with the
+repository's original names and subdirectories, and `/ensure` returns the
+directory. Publish one from an `hf download --local-dir` copy:
+
+    hf download <owner>/<repo> --revision <sha> --local-dir /data/<repo>
+    viiwork-parrot mktorrent --layout dir --id <model-id> --repo <owner>/<repo> \
+        --rev <sha> --license <id> [--license-url https://…] --local /data/<repo> --all
+
+`--all` takes every file of the repo at that revision except
+`.gitattributes` (or list files instead). Every file is size- and
+hash-checked against Hugging Face before anything is written. A catalog
+that contains a folder model is format version 2, which v0.1.0 nodes refuse
+(they keep their cached catalog): upgrade every node before publishing one.

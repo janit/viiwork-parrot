@@ -35,9 +35,13 @@ const (
 const spaceMargin = 1 << 30
 
 type job struct {
-	n      *Node
-	model  string
+	n     *Node
+	model string
+	// f is the torrent this job serves: a catalog file, or for a folder
+	// model (dir != nil) the model's one torrent as a File (Name = model id,
+	// so DiskName() is the directory name; Size = total; no SHA256).
 	f      catalog.File
+	dir    *catalog.Model
 	adopt  []string
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -127,7 +131,11 @@ func (j *job) run() {
 		return
 	}
 	j.set(StateAdopting, "", "")
-	p, dups, err := j.findLocal()
+	find := j.findLocal
+	if j.dir != nil {
+		find = j.findLocalDir
+	}
+	p, dups, err := find()
 	if len(dups) > 0 {
 		j.n.log.Warn("model file stored more than once on this host", "model", j.model, "file", j.f.DiskName(), "seeding", p, "duplicates", dups)
 		j.mu.Lock()
@@ -155,7 +163,12 @@ func (j *job) cleanup() {
 		t.Drop()
 	}
 	if prune {
-		os.Remove(j.incomingPath())
+		if j.dir != nil {
+			os.RemoveAll(j.incomingPath()) // our own .incoming/<id>/
+			os.Remove(j.incomingOwner())
+		} else {
+			os.Remove(j.incomingPath())
+		}
 		if downloaded {
 			j.pruneDataPathIfUnchanged()
 		}
@@ -181,7 +194,7 @@ func (j *job) pruneDataPathIfUnchanged() {
 		j.n.dl.Delete(j.f.InfoHash)
 		return
 	}
-	if err := os.Remove(rec.Path); err == nil {
+	if err := removeRecorded(rec); err == nil {
 		j.n.dl.Delete(j.f.InfoHash)
 	}
 }
@@ -365,10 +378,22 @@ func (j *job) addTorrent(st storage.ClientImpl, download bool) (*torrent.Torrent
 	if err != nil {
 		return nil, err
 	}
+	if j.dir != nil {
+		if err := checkDirInfo(mi, j.dir); err != nil {
+			return nil, err
+		}
+	}
 	t, _ := j.n.sw.cl.AddTorrentOpt(torrent.AddTorrentOpts{
 		InfoHash: mi.HashInfoBytes(), InfoBytes: mi.InfoBytes, Storage: st,
 		DisallowDataDownload: !download,
 	})
+	if t.Info() == nil {
+		// anacrolix drops the error when the storage can't open the torrent
+		// (e.g. a directory where a file must go) and leaves it without
+		// info; DownloadAll on it would panic the whole daemon.
+		t.Drop()
+		return nil, errors.New("could not open the torrent's storage (see the log)")
+	}
 	// One tier per tracker, the layout mktorrent publishes.
 	tiers := make([][]string, 0, len(trackers))
 	for _, tr := range trackers {
@@ -398,7 +423,7 @@ func (j *job) addTorrent(st storage.ClientImpl, download bool) (*torrent.Torrent
 
 // seed serves path in place until the job stops. It never downloads into it.
 func (j *job) seed(path string) {
-	t, err := j.addTorrent(fileStorage(j.n.sw.pc, filepath.Dir(path), filepath.Base(path)), false)
+	t, err := j.addTorrent(j.storageAt(path), false)
 	if err != nil {
 		j.fail(err)
 		return
@@ -415,6 +440,12 @@ func (j *job) seed(path string) {
 
 func (j *job) download() {
 	ih := j.f.InfoHash
+	if j.dir != nil {
+		if err := j.prepareIncomingDir(); err != nil {
+			j.fail(err)
+			return
+		}
+	}
 	for {
 		ok, reason, freed := j.n.reserveSpace(ih, j.incomingPath(), j.f.Size)
 		if ok {
@@ -439,7 +470,7 @@ func (j *job) download() {
 		j.fail(err)
 		return
 	}
-	t, err := j.addTorrent(fileStorage(j.n.sw.pc, j.incomingDir(), j.f.DiskName()), true)
+	t, err := j.addTorrent(j.storageAt(j.incomingPath()), true)
 	if err != nil {
 		j.fail(err)
 		return
@@ -458,6 +489,10 @@ func (j *job) download() {
 	j.mu.Lock()
 	j.t = nil
 	j.mu.Unlock()
+	if j.dir != nil {
+		j.finishDir(pieces)
+		return
+	}
 	sum, err := hashcache.HashFile(j.incomingPath())
 	if err != nil {
 		j.fail(err)
@@ -531,16 +566,34 @@ func (j *job) quarantine(got string, pieces int) {
 		j.fail(fmt.Errorf("%w; quarantine failed: %v", base, err))
 		return
 	}
-	var ih metainfo.Hash
-	if err := ih.FromHexString(j.f.InfoHash); err != nil {
+	if err := j.forgetPieces(pieces); err != nil {
 		j.fail(fmt.Errorf("%w; moved to %s, but forgetting piece completion failed: %v", base, dst, err))
 		return
 	}
+	j.fail(fmt.Errorf("%w; moved to %s", base, dst))
+}
+
+// forgetPieces clears the recorded completion of this torrent's pieces, so
+// a later retry downloads them again instead of trusting data that was
+// moved away.
+func (j *job) forgetPieces(pieces int) error {
+	var ih metainfo.Hash
+	if err := ih.FromHexString(j.f.InfoHash); err != nil {
+		return err
+	}
 	for i := 0; i < pieces; i++ {
 		if err := j.n.sw.pc.Set(metainfo.PieceKey{InfoHash: ih, Index: i}, g.None[bool]()); err != nil {
-			j.fail(fmt.Errorf("%w; moved to %s, but forgetting piece completion failed: %v", base, dst, err))
-			return
+			return err
 		}
 	}
-	j.fail(fmt.Errorf("%w; moved to %s", base, dst))
+	return nil
+}
+
+// storageAt is the torrent storage rooted at path: the file itself for a
+// per-file job, the model directory for a folder model.
+func (j *job) storageAt(path string) storage.ClientImpl {
+	if j.dir != nil {
+		return dirStorage(j.n.sw.pc, path)
+	}
+	return fileStorage(j.n.sw.pc, filepath.Dir(path), filepath.Base(path))
 }

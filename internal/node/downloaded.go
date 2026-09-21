@@ -6,7 +6,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
+	"syscall"
 )
 
 // downloadedFile is what viiwork-parrot remembers about a file it downloaded
@@ -14,11 +17,23 @@ import (
 // prune can confirm the file is still what viiwork-parrot put there before ever
 // deleting it (the user may have replaced it with their own file of the
 // same name).
+//
+// For a folder model, Path is the model's directory and Files records every
+// file in it (by slash path relative to Path) with its own size/mtime; Size
+// is then the total and ModTime unused.
 type downloadedFile struct {
-	Path    string `json:"path"`
-	Size    int64  `json:"size"`
-	ModTime int64  `json:"mtime_ns"`
+	Path    string                  `json:"path"`
+	Size    int64                   `json:"size"`
+	ModTime int64                   `json:"mtime_ns"`
+	Files   map[string]fileIdentity `json:"files,omitempty"`
 }
+
+type fileIdentity struct {
+	Size    int64 `json:"size"`
+	ModTime int64 `json:"mtime_ns"`
+}
+
+func (f downloadedFile) isDir() bool { return f.Files != nil }
 
 // downloadRecord persists which files under data_dir viiwork-parrot itself
 // downloaded (as opposed to adopted in place), keyed by infohash, so that
@@ -101,12 +116,97 @@ func (r *downloadRecord) saveLocked() error {
 // the cheap guard every deletion of a "viiwork-parrot downloaded this" path goes
 // through, so a file the user replaced (or restored from elsewhere) with
 // their own content of the same name never gets deleted.
+//
+// A recorded directory matches only if it is still a real directory holding
+// exactly the recorded regular files, each unchanged (size and mtime), and
+// nothing else: a file the user added is theirs, so the
+// directory is no longer viiwork-parrot's to remove or replace.
 func statRecorded(f downloadedFile) (missing, match bool) {
 	fi, err := os.Lstat(f.Path)
 	if err != nil {
 		return true, false
 	}
-	// Lstat: a symlink now sitting at the path is not the regular file we
-	// downloaded there, whatever it points to.
-	return false, fi.Mode().IsRegular() && fi.Size() == f.Size && fi.ModTime().UnixNano() == f.ModTime
+	if !f.isDir() {
+		// Lstat: a symlink now sitting at the path is not the regular file we
+		// downloaded there, whatever it points to.
+		return false, fi.Mode().IsRegular() && fi.Size() == f.Size && fi.ModTime().UnixNano() == f.ModTime
+	}
+	if !fi.IsDir() {
+		return false, false
+	}
+	seen := 0
+	ok := true
+	filepath.WalkDir(f.Path, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			ok = false
+			return filepath.SkipAll
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(f.Path, p)
+		id, known := f.Files[filepath.ToSlash(rel)]
+		info, err := d.Info()
+		if !known || err != nil || !d.Type().IsRegular() || info.Size() != id.Size || info.ModTime().UnixNano() != id.ModTime {
+			ok = false
+			return filepath.SkipAll
+		}
+		seen++
+		return nil
+	})
+	return false, ok && seen == len(f.Files)
+}
+
+// recordDir captures the identity of the downloaded directory root holding
+// files (slash paths relative to root).
+func recordDir(root string, files []string) (downloadedFile, error) {
+	rec := downloadedFile{Path: root, Files: make(map[string]fileIdentity, len(files))}
+	for _, rel := range files {
+		fi, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return rec, err
+		}
+		rec.Files[rel] = fileIdentity{Size: fi.Size(), ModTime: fi.ModTime().UnixNano()}
+		rec.Size += fi.Size()
+	}
+	return rec, nil
+}
+
+// removeRecorded deletes what rec says viiwork-parrot downloaded: the file,
+// or for a directory each recorded file and then every directory left
+// empty, deepest first — never anything else. Callers check statRecorded
+// first.
+func removeRecorded(rec downloadedFile) error {
+	if !rec.isDir() {
+		return os.Remove(rec.Path)
+	}
+	dirs := map[string]bool{rec.Path: true}
+	for rel := range rec.Files {
+		p := filepath.Join(rec.Path, filepath.FromSlash(rel))
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		for d := filepath.Dir(p); d != rec.Path && strings.HasPrefix(d, rec.Path); d = filepath.Dir(d) {
+			dirs[d] = true
+		}
+	}
+	return removeEmptyDirs(dirs)
+}
+
+// removeEmptyDirs removes each of dirs that is empty, deepest first; a
+// directory that is not empty (something else is in it) is left alone.
+func removeEmptyDirs(dirs map[string]bool) error {
+	list := make([]string, 0, len(dirs))
+	for d := range dirs {
+		list = append(list, d)
+	}
+	sort.Slice(list, func(i, j int) bool { return len(list[i]) > len(list[j]) })
+	var firstErr error
+	for _, d := range list {
+		err := os.Remove(d)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

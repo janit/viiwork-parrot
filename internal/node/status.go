@@ -81,7 +81,8 @@ func (n *Node) ModelStatus(id string) (ModelStatus, bool) {
 	}
 	m, ok := n.cat.Model(id)
 	var jobs []*job
-	for _, f := range m.Files {
+	want := units(m)
+	for _, f := range want {
 		if j := n.jobs[f.InfoHash]; j != nil {
 			jobs = append(jobs, j)
 		}
@@ -96,7 +97,7 @@ func (n *Node) ModelStatus(id string) (ModelStatus, bool) {
 	}
 	ms := ModelStatus{ID: id, State: StateSeeding}
 	var size, done int64
-	main := m.MainFile().InfoHash
+	main := mainInfoHash(m)
 	for _, j := range jobs {
 		fs, peers, seeds, up, noSpace := j.status()
 		ms.Files = append(ms.Files, fs)
@@ -119,7 +120,7 @@ func (n *Node) ModelStatus(id string) (ModelStatus, bool) {
 			ms.Path = fs.Path
 		}
 	}
-	if len(jobs) < len(m.Files) {
+	if len(jobs) < len(want) {
 		ms.State = StateQueued
 	}
 	if size > 0 {

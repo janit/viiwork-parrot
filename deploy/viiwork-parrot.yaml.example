@@ -19,9 +19,11 @@ models:
   seed_only_existing: false   # true: adopt+seed what is on disk, never download
   prune: false                # true: delete files of models removed from catalog
   adopt:                      # extra dirs/files scanned (recursively, symlinks followed)
-    - /home/user/models       # for existing copies under any name; seeded in place
+    - /home/user/models       # for existing copies under any name; seeded in place.
+                              # Every directory in here is also a folder-model (layout: dir)
+                              # candidate, e.g. an `hf download --local-dir` copy.
   viiwork_configs:            # viiwork.yaml files whose model paths are adoption candidates
-    - /home/user/viiwork/viiwork.yaml
+    - /home/user/viiwork/viiwork.yaml   # a path: that is a directory is a folder-model candidate
 network:
   listen_port: 42069          # TCP + uTP
   upnp: true

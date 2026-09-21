@@ -128,7 +128,7 @@ func (n *Node) staleOwnDownload(path, exceptIH string) (string, bool) {
 	inCatalog := map[string]bool{}
 	if n.cat != nil {
 		for _, m := range n.cat.Models {
-			for _, f := range m.Files {
+			for _, f := range units(m) {
 				inCatalog[f.InfoHash] = true
 			}
 		}
@@ -171,6 +171,7 @@ func New(o Options) (*Node, error) {
 		sw.Close()
 		return nil, err
 	}
+	cleanReplaced(o.Config.Node.DataDir, o.Logger)
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Node{
 		cfg: o.Config, src: o.Source, pol: o.Policy, log: o.Logger, sw: sw, hashes: hc, dl: dl,
@@ -253,13 +254,13 @@ func (n *Node) reconcileLocked(retryFailed bool) {
 	keep := map[string]bool{}
 	inCatalog := map[string]bool{}
 	for _, m := range n.cat.Models {
-		for _, f := range m.Files {
+		for _, f := range units(m) {
 			inCatalog[f.InfoHash] = true
 		}
 		if !n.wantedLocked(m.ID) {
 			continue
 		}
-		for _, f := range m.Files {
+		for _, f := range units(m) {
 			keep[f.InfoHash] = true
 		}
 	}
@@ -278,24 +279,32 @@ func (n *Node) reconcileLocked(retryFailed bool) {
 	// waiting on this sweep to be removed, and a job that hashed the stale
 	// file first would fail "left untouched" instead of downloading fresh.
 	n.pruneRecordedLocked(inCatalog)
-	var adoptIdx map[int64][]string
+	var adoptIdx *adoptIndex
 	for _, m := range n.cat.Models {
 		if !n.wantedLocked(m.ID) {
 			continue
 		}
-		for _, f := range m.Files {
+		for _, f := range units(m) {
 			if _, ok := n.jobs[f.InfoHash]; ok {
 				continue
 			}
 			if adoptIdx == nil {
 				adoptIdx = n.scanAdopt()
 			}
+			candidates := adoptIdx.files[f.Size]
+			if m.IsDir() {
+				candidates = adoptIdx.dirs
+			}
 			// A predecessor job for this infohash, or for an older revision
 			// with the same disk name, may still be winding down (stopped
 			// but not yet cleaned up); the replacement waits for both so
 			// they never touch the same incoming/data paths or torrent at
 			// once.
-			j := newJob(n, m.ID, f, adoptIdx[f.Size], n.stopping[f.InfoHash], n.stoppingDisk[f.DiskName()])
+			j := newJob(n, m.ID, f, candidates, n.stopping[f.InfoHash], n.stoppingDisk[f.DiskName()])
+			if m.IsDir() {
+				dm := m
+				j.dir = &dm
+			}
 			n.jobs[f.InfoHash] = j
 			n.wg.Add(1)
 			go func() {
@@ -336,7 +345,7 @@ func (n *Node) pruneRecordedLocked(inCatalog map[string]bool) {
 			n.dl.Delete(ih)
 			continue
 		}
-		if err := os.Remove(rec.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := removeRecorded(rec); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			n.log.Warn("prune", "path", rec.Path, "err", err)
 			continue
 		}
@@ -354,18 +363,31 @@ func pathInDir(dir, p string) bool {
 	return true
 }
 
-// scanAdopt indexes adoption candidates by size: files under models.adopt
-// (dirs walked, symlinked files followed, symlinked dirs not descended
-// *within* a walk; a root itself that is a symlink to a directory is
-// resolved first so it's still walked; file entries taken as-is) and each
+// adoptIndex holds adoption candidates: regular files by size (per-file
+// models) and directories (folder models).
+type adoptIndex struct {
+	files map[int64][]string
+	dirs  []string
+}
+
+// scanAdopt indexes adoption candidates: files under models.adopt (dirs
+// walked, symlinked files followed, symlinked dirs not descended *within* a
+// walk; a root itself that is a symlink to a directory is resolved first so
+// it's still walked; file entries taken as-is) and each
 // models.viiwork_configs model path plus its sibling files (split shards).
-// findLocal dedupes by inode.
-func (n *Node) scanAdopt() map[int64][]string {
-	idx := map[int64][]string{}
+// Every directory met (the roots included, hidden ones skipped, symlinks to
+// directories taken as-is) and every viiwork model path that is a directory
+// is a folder-model candidate. findLocal/findLocalDir dedupe by inode.
+func (n *Node) scanAdopt() *adoptIndex {
+	idx := &adoptIndex{files: map[int64][]string{}}
 	add := func(p string) {
 		fi, err := os.Stat(p)
-		if err == nil && fi.Mode().IsRegular() {
-			idx[fi.Size()] = append(idx[fi.Size()], p)
+		switch {
+		case err != nil:
+		case fi.Mode().IsRegular():
+			idx.files[fi.Size()] = append(idx.files[fi.Size()], p)
+		case fi.IsDir():
+			idx.dirs = append(idx.dirs, p)
 		}
 	}
 	for _, root := range n.cfg.Models.Adopt {
@@ -383,6 +405,7 @@ func (n *Node) scanAdopt() map[int64][]string {
 				if p != real && strings.HasPrefix(d.Name(), ".") {
 					return filepath.SkipDir
 				}
+				idx.dirs = append(idx.dirs, p)
 				return nil
 			}
 			add(p)
@@ -396,8 +419,14 @@ func (n *Node) scanAdopt() map[int64][]string {
 			continue
 		}
 		for _, p := range paths {
-			if _, err := os.Stat(p); err != nil {
+			fi, err := os.Stat(p)
+			if err != nil {
 				n.log.Warn("viiwork model path not on this host (container path?); add its host directory to models.adopt", "config", vc, "path", p)
+				continue
+			}
+			if fi.IsDir() {
+				// A model directory (vLLM/SGLang): a folder-model candidate.
+				idx.dirs = append(idx.dirs, p)
 				continue
 			}
 			dir := filepath.Dir(p)

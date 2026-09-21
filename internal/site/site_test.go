@@ -2,6 +2,7 @@ package site
 
 import (
 	"bytes"
+	"fmt"
 	"html"
 	"strings"
 	"testing"
@@ -57,6 +58,9 @@ func TestRenderRealCatalog(t *testing.T) {
 			if !strings.Contains(out, html.EscapeString(f.Magnet)) {
 				t.Errorf("output missing magnet href for file %q of model %q", f.Name, m.ID)
 			}
+			if !strings.Contains(out, `href="magnet:?xt=urn:btih:`+f.InfoHash) {
+				t.Errorf("magnet href for file %q of model %q was not rendered as a link", f.Name, m.ID)
+			}
 			torrentHref := "torrents/" + f.InfoHash + ".torrent"
 			if !strings.Contains(out, torrentHref) {
 				t.Errorf("output missing torrent href %q", torrentHref)
@@ -93,6 +97,12 @@ func TestRenderEscapesHTML(t *testing.T) {
 	}
 	if !strings.Contains(out, "&lt;script&gt;") {
 		t.Fatalf("expected escaped script tag in output")
+	}
+}
+
+func TestRenderNoSanitizedLinks(t *testing.T) {
+	if out := render(t, realCatalog(t), Options{}); strings.Contains(out, "ZgotmplZ") {
+		t.Fatal("html/template replaced a link it considered unsafe (magnet: hrefs need template.URL)")
 	}
 }
 
@@ -156,6 +166,22 @@ func TestRenderNoScriptAndOnlyAllowedLinks(t *testing.T) {
 	}
 }
 
+func TestSiteHost(t *testing.T) {
+	cases := []struct {
+		trackers []string
+		want     string
+	}{
+		{nil, defaultSiteHost},
+		{[]string{"udp://t.256.fi:6969/announce"}, defaultSiteHost},
+		{[]string{"udp://t.256.fi:6969/announce", "https://parrot.lnx.fi/announce"}, "parrot.lnx.fi"},
+	}
+	for _, tc := range cases {
+		if got := siteHost(tc.trackers); got != tc.want {
+			t.Errorf("siteHost(%v) = %q, want %q", tc.trackers, got, tc.want)
+		}
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -178,6 +204,30 @@ func TestRenderPageStructure(t *testing.T) {
 	}
 	if !strings.Contains(out, `name="viewport"`) {
 		t.Error("output missing viewport meta tag")
+	}
+}
+
+func TestRenderSummaryTotals(t *testing.T) {
+	c := realCatalog(t)
+	out := render(t, c, Options{})
+
+	var wantFiles int
+	var wantSize int64
+	for _, m := range c.Models {
+		wantFiles += len(m.Files)
+		wantSize += m.TotalSize()
+	}
+	if !strings.Contains(out, fmt.Sprintf(">%d<", len(c.Models))) {
+		t.Errorf("output missing model count %d in summary", len(c.Models))
+	}
+	if !strings.Contains(out, fmt.Sprintf(">%d<", wantFiles)) {
+		t.Errorf("output missing total file count %d in summary", wantFiles)
+	}
+	if !strings.Contains(out, humanSize(wantSize)) {
+		t.Errorf("output missing total size %q in summary", humanSize(wantSize))
+	}
+	if !strings.Contains(out, "ed25519") {
+		t.Error("output missing \"Signed: ed25519\" in summary")
 	}
 }
 

@@ -1,6 +1,77 @@
 # Changelog
 
-## Unreleased
+## v0.2.0 — 2026-09-21
+
+Changes since v0.1.0, to be released as v0.2.0.
+
+> **Upgrade every node before publishing a catalog with folder models.**
+> Publishing the first folder model makes the catalog format version 2.
+> v0.1.0 nodes reject it ("unsupported version 2") and stay frozen on their
+> cached catalog from then on: they keep seeding what they have, but pick up
+> no further catalog changes — new models, new revisions, removals — until
+> they are upgraded to v0.2.0.
+
+### Folder models
+
+A catalog model may now be a **folder model** (`layout: dir`), for Hugging
+Face safetensors repos that vLLM/SGLang load as a directory (e.g. 57 files /
+160 GB, or 418 files / 126 GB). It has exactly one torrent: a v1 multi-file
+torrent whose `info.name` is the HF revision and whose files are the HF
+paths, with the web-seed `https://huggingface.co/<repo>/resolve/` (trailing
+slash), so BEP-19 requests `…/resolve/<revision>/<path>` — any BitTorrent
+client can web-seed it straight from Hugging Face. Its files keep `name`,
+`size` and `sha256`; the infohash and magnet are model-level. Folder models
+may share file content with each other (e.g. the same `tokenizer.json` in
+two quantizations) and empty files are exempt, but a per-file model's file
+may not duplicate a folder's. An optional
+`license_url` (any model) points at license text that isn't in the repo.
+
+- `viiwork-parrot mktorrent --layout dir … --local <dir> (--all | FILE…)`
+  publishes one from an `hf download --local-dir` copy. `--all` is every file
+  of the repo at the revision except `.gitattributes`. Every file is checked
+  exactly like a per-file model's (size; sha256 against `lfs.oid`, or the git
+  blob sha1 against `oid`) in the same single streaming pass that hashes the
+  pieces, with per-file progress; nothing is written unless all match. The
+  infohash is deterministic for the same files and revision.
+- A node handles a folder model as one job. It downloads into
+  `data_dir/.incoming/<id>/`, verifies every file's sha256, and moves the
+  whole directory to `data_dir/<id>` with no-replace semantics
+  (`renameat2(RENAME_NOREPLACE)`): a directory that isn't viiwork-parrot's own
+  recorded, unchanged download is never replaced or merged into — the model
+  fails with "left untouched". `/ensure` and `/status` return the directory.
+- Adoption: `data_dir/<id>`, every directory under `models.adopt`, and every
+  viiwork `path:` that is a directory are candidates; the first holding every
+  catalog file (relative path, size, sha256) is seeded in place, further full
+  copies are reported as duplicates, and partial copies are never adopted.
+- `downloaded.json` records a folder download file by file (size and mtime);
+  `prune` removes it only while it holds exactly those files, unchanged, and
+  a new revision replaces only such an unchanged own download.
+- The landing page shows a folder model as one row (file count, total size,
+  revision, one magnet and `.torrent`) with its file list collapsed.
+
+**Catalog format version 2.** `catalog build` writes `"version": 2` only when
+the catalog contains a folder model; a per-file-only catalog is still
+version 1 and byte-compatible with v0.1.0 nodes. A v0.1.0 node refuses a
+version-2 catalog ("unsupported version 2") and keeps using its cached
+catalog, so it stops picking up catalog updates. **Upgrade every node to
+v0.2.0 before publishing a catalog with a folder model.**
+
+### Fixes
+
+- The landing page rendered every magnet link as `href="#ZgotmplZ"`
+  (html/template does not trust the `magnet:` scheme); catalog magnets are
+  now emitted as trusted URLs.
+- A second local patch to the vendored anacrolix
+  (`third_party/anacrolix-torrent/VIIWORK-PARROT-PATCH.md`): file storage
+  opened zero-length files for every read and write that touched them, so
+  with mmap file IO an empty file in a multi-file torrent (mmap of length 0,
+  `EINVAL`) stalled the whole download. Zero-length extents are now skipped.
+  And opening a torrent no longer re-creates (`O_TRUNC`) existing empty
+  files, which rewrote the mtime of files in adopted folders viiwork-parrot
+  seeds in place (and could truncate one changed since verification).
+- A torrent whose storage anacrolix cannot open is now a failed job instead
+  of a daemon panic (anacrolix drops that error and leaves the torrent
+  without info).
 
 ### Static landing page
 
