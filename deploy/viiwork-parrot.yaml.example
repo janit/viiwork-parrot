@@ -1,0 +1,54 @@
+# /etc/viiwork-parrot/viiwork-parrot.yaml. Install with:
+#   sudo install -D -m 0644 deploy/viiwork-parrot.yaml.example /etc/viiwork-parrot/viiwork-parrot.yaml
+#   sudo install -m 0755 bin/viiwork-parrot /usr/local/bin/viiwork-parrot
+#   sudo install -m 0644 deploy/viiwork-parrot@.service /etc/systemd/system/
+#   sudo systemctl enable --now viiwork-parrot@$USER
+# Tailscale discovery assumes every node uses the same network.listen_port.
+
+# viiwork-parrot.yaml
+node:
+  name: node1                # a name for this host; shown in dashboards/logs, need not match its hostname
+  data_dir: /models
+  state_dir: /var/lib/viiwork-parrot
+catalog:
+  url: https://parrot.lnx.fi/catalog.json   # .sig fetched from url + ".sig"; the catalog is signed
+  refresh: 1h
+  # pubkey: <base64 ed25519, overrides compiled-in key>
+models:
+  want: [qwen3.8-27b-q4kxl]   # ids from the catalog; ["*"] = full seed
+  seed_only_existing: false   # true: adopt+seed what is on disk, never download
+  prune: false                # true: delete files of models removed from catalog
+  adopt:                      # extra dirs/files scanned (recursively, symlinks followed)
+    - /home/user/models       # for existing copies under any name; seeded in place
+  viiwork_configs:            # viiwork.yaml files whose model paths are adoption candidates
+    - /home/user/viiwork/viiwork.yaml
+network:
+  listen_port: 42069          # TCP + uTP
+  upnp: true
+  dht: true
+  pex: true
+local:                        # same-LAN and tailnet peers
+  cidrs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 100.64.0.0/10, fd7a:115c:a1e0::/48, "::1/128", "fe80::/10", "fc00::/7"]  # default: RFC1918, loopback, tailnet, IPv6 link-local + ULA
+  throttle: false             # false: local peers bypass rate limits
+  count_in_max_conns: false   # false: local conns don't consume max_conns
+  lsd: true                   # BEP-14 LAN multicast discovery
+  tailscale: true             # add online tailnet hosts (tailscale status --json) on listen_port
+  peers: []                   # static extras, e.g. ["node-a.lan:42069"]
+limits:
+  upload: 50Mbit              # units: bit/s (Kbit, Mbit, Gbit) or byte/s (KB, MB); 0 = unlimited
+  download: 0
+  max_conns: 200              # established conns, all torrents
+  max_conns_per_torrent: 50
+  max_half_open: 25           # startup only; not allowed in schedule rules
+  max_active_uploads: 4
+  schedule:                   # evaluated in order, first match wins, local time
+    - days: [mon-fri]
+      from: "08:00"
+      to: "18:00"
+      upload: 10Mbit
+      max_conns: 60
+    - from: "00:00"           # no days = every day
+      to: "06:00"
+      upload: 0
+api:
+  listen: 127.0.0.1:7950

@@ -1,0 +1,48 @@
+- id: qwen3.8-27b-q4kxl
+  hf_repo: unsloth/Qwen3.8-27B-GGUF
+  revision: 4ca720788d1e01f1bff70c033e0d0028fd02e502
+  license: apache-2.0
+  files:
+    - name: Qwen3.8-27B-UD-Q4_K_XL.gguf
+      size: 17559178144
+      sha256: 3f227079003add2511437e5b1e94812e363385225bf6a9b47b0054a72bc8b01e
+      infohash: 3de903694afb9ce1f6509b7ad1aa68a2bb9eb297
+      magnet: magnet:?xt=urn:btih:3de903694afb9ce1f6509b7ad1aa68a2bb9eb297&dn=Qwen3.8-27B-UD-Q4_K_XL.gguf&tr=udp%3A%2F%2Ft.256.fi%3A6969%2Fannounce&tr=https%3A%2F%2Fparrot.lnx.fi%2Fannounce&tr=udp%3A%2F%2Ftracker.pirateface.co%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&ws=https%3A%2F%2Fhuggingface.co%2Funsloth%2FQwen3.8-27B-GGUF%2Fresolve%2F4ca720788d1e01f1bff70c033e0d0028fd02e502%2FQwen3.8-27B-UD-Q4_K_XL.gguf
+    - name: README.md
+      store_as: qwen3.8-27b-q4kxl.README.md
+      size: 7455
+      sha256: 66088b22a4db15353288f45a570279f76d7d8b7f349a64dd28698b867c9bd2bb
+      infohash: b4629d3670f98b03a6ff5a3c0096b7bce8aa223f
+      magnet: magnet:?xt=urn:btih:b4629d3670f98b03a6ff5a3c0096b7bce8aa223f&dn=qwen3.8-27b-q4kxl.README.md&tr=udp%3A%2F%2Ft.256.fi%3A6969%2Fannounce&tr=https%3A%2F%2Fparrot.lnx.fi%2Fannounce&tr=udp%3A%2F%2Ftracker.pirateface.co%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&ws=https%3A%2F%2Fhuggingface.co%2Funsloth%2FQwen3.8-27B-GGUF%2Fresolve%2F4ca720788d1e01f1bff70c033e0d0028fd02e502%2FREADME.md
+- id: granite4.2-8b-q8_0
+  hf_repo: ibm-granite/granite-4.2-8b-GGUF
+  revision: 93f3f6a8938ee922b784cf4e5b4203cd3428df8f
+  license: apache-2.0
+  files:
+    - name: granite-4.2-8b-Q8_0.gguf
+      size: 9345613952
+      sha256: fb66ad5750680c77c76b9dc095961375f14fc88ba15fd5fc084ef6e6701bad77
+      infohash: 881ae1dd1f40487ab2682a3c97bab2effd2db518
+      magnet: magnet:?xt=urn:btih:881ae1dd1f40487ab2682a3c97bab2effd2db518&dn=granite-4.2-8b-Q8_0.gguf&tr=udp%3A%2F%2Ft.256.fi%3A6969%2Fannounce&tr=https%3A%2F%2Fparrot.lnx.fi%2Fannounce&tr=udp%3A%2F%2Ftracker.pirateface.co%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&ws=https%3A%2F%2Fhuggingface.co%2Fibm-granite%2Fgranite-4.2-8b-GGUF%2Fresolve%2F93f3f6a8938ee922b784cf4e5b4203cd3428df8f%2Fgranite-4.2-8b-Q8_0.gguf
+    - name: README.md
+      store_as: granite4.2-8b-q8_0.README.md
+      size: 472
+      sha256: 1f43efacac28527c2392735115a1f14f9bc736bedc6f7982f41513e81041899f
+      infohash: 980253472b574a63aa4b01d509225b48a005c9de
+      magnet: magnet:?xt=urn:btih:980253472b574a63aa4b01d509225b48a005c9de&dn=granite4.2-8b-q8_0.README.md&tr=udp%3A%2F%2Ft.256.fi%3A6969%2Fannounce&tr=https%3A%2F%2Fparrot.lnx.fi%2Fannounce&tr=udp%3A%2F%2Ftracker.pirateface.co%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&ws=https%3A%2F%2Fhuggingface.co%2Fibm-granite%2Fgranite-4.2-8b-GGUF%2Fresolve%2F93f3f6a8938ee922b784cf4e5b4203cd3428df8f%2FREADME.md
+- id: translategemma-27b-q6k
+  hf_repo: bullerwins/translategemma-27b-it-GGUF
+  revision: 648ab470301440606384471ef4edb1ffc2a4b88c
+  license: gemma
+  files:
+    - name: translategemma-27b-it-Q6_K.gguf
+      size: 22166989472
+      sha256: 6abe01bb29c6e091c0bfd4c330435a36a8b2098dc04599403a20de6d7ab2dc68
+      infohash: 1bdf6fb403b69a99a1fa1cb9052526215ed2a168
+      magnet: magnet:?xt=urn:btih:1bdf6fb403b69a99a1fa1cb9052526215ed2a168&dn=translategemma-27b-it-Q6_K.gguf&tr=udp%3A%2F%2Ft.256.fi%3A6969%2Fannounce&tr=https%3A%2F%2Fparrot.lnx.fi%2Fannounce&tr=udp%3A%2F%2Ftracker.pirateface.co%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&ws=https%3A%2F%2Fhuggingface.co%2Fbullerwins%2Ftranslategemma-27b-it-GGUF%2Fresolve%2F648ab470301440606384471ef4edb1ffc2a4b88c%2Ftranslategemma-27b-it-Q6_K.gguf
+    - name: README.md
+      store_as: translategemma-27b-q6k.README.md
+      size: 17557
+      sha256: d613a2bdd6c2023b2445913fd6cc801e858ec0eabab2ccc88c645516b792f0c5
+      infohash: 7b731cf481d1e9167125263d855b8c14020eb790
+      magnet: magnet:?xt=urn:btih:7b731cf481d1e9167125263d855b8c14020eb790&dn=translategemma-27b-q6k.README.md&tr=udp%3A%2F%2Ft.256.fi%3A6969%2Fannounce&tr=https%3A%2F%2Fparrot.lnx.fi%2Fannounce&tr=udp%3A%2F%2Ftracker.pirateface.co%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&ws=https%3A%2F%2Fhuggingface.co%2Fbullerwins%2Ftranslategemma-27b-it-GGUF%2Fresolve%2F648ab470301440606384471ef4edb1ffc2a4b88c%2FREADME.md

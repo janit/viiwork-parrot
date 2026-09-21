@@ -1,0 +1,461 @@
+package node
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/metainfo"
+
+	"github.com/janit/viiwork-parrot/internal/catalog"
+	"github.com/janit/viiwork-parrot/internal/config"
+	"github.com/janit/viiwork-parrot/internal/hashcache"
+	"github.com/janit/viiwork-parrot/internal/throttle"
+)
+
+var (
+	ErrUnknownModel = errors.New("unknown model")
+	ErrNoCatalog    = errors.New("no catalog loaded yet")
+	ErrNoSpace      = errors.New("insufficient disk space")
+)
+
+type TorrentSource interface {
+	Torrent(ctx context.Context, infohash string) (*metainfo.MetaInfo, error)
+}
+
+type Options struct {
+	Config *config.Config
+	Source TorrentSource
+	Policy *throttle.Policy
+	Logger *slog.Logger
+}
+
+type Node struct {
+	cfg    *config.Config
+	src    TorrentSource
+	pol    *throttle.Policy
+	log    *slog.Logger
+	sw     *swarm
+	hashes *hashcache.Cache
+	now    func() time.Time
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	dl *downloadRecord
+
+	startOnce sync.Once
+	// applyMu serializes applyLimits end to end (schedule ticks vs.
+	// SetOverride/ClearOverride), so an override can never be reverted by a
+	// concurrently-running tick and the per-job/rate caches are never
+	// updated by two interleaved runs. It is a lock distinct from mu/j.mu:
+	// nothing else acquires it, so holding it across an applyLimits call
+	// (anacrolix calls included) can't deadlock with anything.
+	applyMu sync.Mutex
+
+	mu        sync.Mutex
+	closed    bool // set once by Close; nothing new is started after it
+	cat       *catalog.Catalog
+	extraWant map[string]bool
+	jobs      map[string]*job          // by infohash
+	stopping  map[string]chan struct{} // by infohash: a just-stopped job's done channel, until it fires
+	// stoppingDisk is the same, by disk name: a new revision of a file
+	// (new infohash, same data_dir name) waits for the old one's job.
+	stoppingDisk map[string]chan struct{}
+	peers        []torrent.PeerInfo
+	lim          limitsState
+	// reserved: disk space held by admitted downloads (by infohash), so
+	// parallel downloads never overcommit the free space between them.
+	reserved   map[string]reservation
+	spaceFreed chan struct{} // closed (and replaced) whenever a reservation is released
+}
+
+type reservation struct {
+	path string // the .incoming file being written
+	size int64
+}
+
+// outstanding is what the download still has to write: its size minus the
+// blocks already allocated to its file (which the free-space figure already
+// accounts for).
+func (r reservation) outstanding() int64 {
+	return max(0, r.size-allocatedBytes(r.path))
+}
+
+// reserveSpace admits a download of size bytes into path if the free space
+// minus every other admitted download's outstanding bytes still leaves its
+// own outstanding bytes plus a 1GiB margin. Admission and reservation are
+// one step under n.mu. If it doesn't fit, it returns a reason and a channel
+// that is closed when some reservation is released.
+func (n *Node) reserveSpace(ih, path string, size int64) (ok bool, reason string, freed <-chan struct{}) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	r := reservation{path: path, size: size}
+	free, err := diskFree(n.cfg.Node.DataDir)
+	if err != nil {
+		n.log.Warn("free space unknown; not reserving", "dir", n.cfg.Node.DataDir, "err", err)
+		n.reserved[ih] = r
+		return true, "", nil
+	}
+	var others int64
+	for k, o := range n.reserved {
+		if k != ih {
+			others += o.outstanding()
+		}
+	}
+	need := r.outstanding()
+	if int64(free)-others >= need+spaceMargin {
+		n.reserved[ih] = r
+		return true, "", nil
+	}
+	return false, fmt.Sprintf("%v: need %d bytes plus 1GiB margin, %d free, %d reserved by other downloads", ErrNoSpace, need, free, others), n.spaceFreed
+}
+
+// staleOwnDownload finds viiwork-parrot's own download at path of a revision
+// that is gone: a downloaded.json record for path under an infohash other
+// than exceptIH that is no longer in the catalog, with the file unchanged
+// since (size+mtime). Such a file may be replaced by the new revision.
+func (n *Node) staleOwnDownload(path, exceptIH string) (string, bool) {
+	n.mu.Lock()
+	inCatalog := map[string]bool{}
+	if n.cat != nil {
+		for _, m := range n.cat.Models {
+			for _, f := range m.Files {
+				inCatalog[f.InfoHash] = true
+			}
+		}
+	}
+	n.mu.Unlock()
+	for ih, rec := range n.dl.All() {
+		if ih == exceptIH || rec.Path != path || inCatalog[ih] {
+			continue
+		}
+		if _, match := statRecorded(rec); match {
+			return ih, true
+		}
+	}
+	return "", false
+}
+
+func (n *Node) releaseSpace(ih string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if _, ok := n.reserved[ih]; !ok {
+		return
+	}
+	delete(n.reserved, ih)
+	close(n.spaceFreed)
+	n.spaceFreed = make(chan struct{})
+}
+
+func New(o Options) (*Node, error) {
+	sw, err := newSwarm(o.Config, o.Policy, o.Logger)
+	if err != nil {
+		return nil, err
+	}
+	hc, err := hashcache.Open(filepath.Join(o.Config.Node.StateDir, "hashes.json"))
+	if err != nil {
+		sw.Close()
+		return nil, err
+	}
+	dl, err := openDownloadRecord(filepath.Join(o.Config.Node.StateDir, "downloaded.json"))
+	if err != nil {
+		sw.Close()
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Node{
+		cfg: o.Config, src: o.Source, pol: o.Policy, log: o.Logger, sw: sw, hashes: hc, dl: dl,
+		now: time.Now, ctx: ctx, cancel: cancel,
+		extraWant: map[string]bool{}, jobs: map[string]*job{}, stopping: map[string]chan struct{}{}, stoppingDisk: map[string]chan struct{}{},
+		lim:      limitsState{rule: -1, rates: map[string]rateSample{}},
+		reserved: map[string]reservation{}, spaceFreed: make(chan struct{}),
+	}, nil
+}
+
+func (n *Node) Port() int { return n.sw.Port() }
+
+// Close stops every job and the swarm. It is idempotent. Once it has
+// started, SetCatalog/Ensure/Start no longer launch anything, so no
+// goroutine is ever added to n.wg while (or after) it is being waited on.
+func (n *Node) Close() {
+	n.mu.Lock()
+	already := n.closed
+	n.closed = true
+	n.mu.Unlock()
+	if already {
+		return
+	}
+	n.cancel()
+	n.wg.Wait()
+	n.sw.Close()
+}
+
+func (n *Node) SetCatalog(c *catalog.Catalog) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cat = c
+	n.reconcileLocked(true)
+}
+
+func (n *Node) wantedLocked(id string) bool {
+	if n.extraWant[id] {
+		return true
+	}
+	for _, w := range n.cfg.Models.Want {
+		if w == "*" || w == id {
+			return true
+		}
+	}
+	return false
+}
+
+// retireLocked stops j and remembers its done channel by infohash and by
+// disk name until it fires, so a successor for the same infohash — or for a
+// new revision stored under the same disk name — waits it out before
+// touching the same paths.
+func (n *Node) retireLocked(ih string, j *job, prune bool) {
+	j.stop(prune)
+	disk := j.f.DiskName()
+	n.stopping[ih] = j.done
+	n.stoppingDisk[disk] = j.done
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		<-j.done
+		n.mu.Lock()
+		if n.stopping[ih] == j.done {
+			delete(n.stopping, ih)
+		}
+		if n.stoppingDisk[disk] == j.done {
+			delete(n.stoppingDisk, disk)
+		}
+		n.mu.Unlock()
+	}()
+	delete(n.jobs, ih)
+}
+
+// reconcileLocked starts/stops jobs to match the catalog and want list.
+// retryFailed (catalog updates) also restarts failed jobs that are still
+// wanted.
+func (n *Node) reconcileLocked(retryFailed bool) {
+	if n.cat == nil || n.closed {
+		return
+	}
+	keep := map[string]bool{}
+	inCatalog := map[string]bool{}
+	for _, m := range n.cat.Models {
+		for _, f := range m.Files {
+			inCatalog[f.InfoHash] = true
+		}
+		if !n.wantedLocked(m.ID) {
+			continue
+		}
+		for _, f := range m.Files {
+			keep[f.InfoHash] = true
+		}
+	}
+	for ih, j := range n.jobs {
+		switch {
+		case !keep[ih]:
+			n.retireLocked(ih, j, n.cfg.Models.Prune && !inCatalog[ih])
+		case retryFailed && j.failed():
+			// Still wanted: restart it (below) so a cleared obstacle or a
+			// transient error doesn't need a daemon restart.
+			n.retireLocked(ih, j, false)
+		}
+	}
+	// Prune before launching any new job: a newly (re)wanted infohash can
+	// share a data_dir disk name with a now-gone model whose file is only
+	// waiting on this sweep to be removed, and a job that hashed the stale
+	// file first would fail "left untouched" instead of downloading fresh.
+	n.pruneRecordedLocked(inCatalog)
+	var adoptIdx map[int64][]string
+	for _, m := range n.cat.Models {
+		if !n.wantedLocked(m.ID) {
+			continue
+		}
+		for _, f := range m.Files {
+			if _, ok := n.jobs[f.InfoHash]; ok {
+				continue
+			}
+			if adoptIdx == nil {
+				adoptIdx = n.scanAdopt()
+			}
+			// A predecessor job for this infohash, or for an older revision
+			// with the same disk name, may still be winding down (stopped
+			// but not yet cleaned up); the replacement waits for both so
+			// they never touch the same incoming/data paths or torrent at
+			// once.
+			j := newJob(n, m.ID, f, adoptIdx[f.Size], n.stopping[f.InfoHash], n.stoppingDisk[f.DiskName()])
+			n.jobs[f.InfoHash] = j
+			n.wg.Add(1)
+			go func() {
+				defer n.wg.Done()
+				j.run()
+			}()
+		}
+	}
+}
+
+// pruneRecordedLocked removes files viiwork-parrot downloaded (recorded in
+// n.dl, so this survives a restart) whose infohash is no longer in the
+// catalog at all and has no job (running or winding down) still using it.
+// It never touches a path outside data_dir, and it never touches adopted
+// files: those were never recorded here. Nor does it touch a recorded file
+// whose size/mtime no longer match what was recorded at download time (the
+// user replaced it, or it's already gone) — the record is simply forgotten
+// in that case, without touching whatever is (or isn't) at that path.
+func (n *Node) pruneRecordedLocked(inCatalog map[string]bool) {
+	if !n.cfg.Models.Prune {
+		return
+	}
+	for ih, rec := range n.dl.All() {
+		if inCatalog[ih] || n.jobs[ih] != nil || n.stopping[ih] != nil {
+			continue
+		}
+		if !pathInDir(n.cfg.Node.DataDir, rec.Path) {
+			n.log.Warn("prune: recorded path is not inside data_dir, refusing to remove", "path", rec.Path)
+			continue
+		}
+		missing, match := statRecorded(rec)
+		if missing {
+			n.dl.Delete(ih)
+			continue
+		}
+		if !match {
+			n.log.Warn("prune: file no longer matches what viiwork-parrot downloaded (replaced?); leaving it and forgetting the record", "path", rec.Path)
+			n.dl.Delete(ih)
+			continue
+		}
+		if err := os.Remove(rec.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			n.log.Warn("prune", "path", rec.Path, "err", err)
+			continue
+		}
+		n.dl.Delete(ih)
+	}
+}
+
+// pathInDir reports whether p is strictly inside dir (not dir itself, no
+// escaping "..").
+func pathInDir(dir, p string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), p)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return true
+}
+
+// scanAdopt indexes adoption candidates by size: files under models.adopt
+// (dirs walked, symlinked files followed, symlinked dirs not descended
+// *within* a walk; a root itself that is a symlink to a directory is
+// resolved first so it's still walked; file entries taken as-is) and each
+// models.viiwork_configs model path plus its sibling files (split shards).
+// findLocal dedupes by inode.
+func (n *Node) scanAdopt() map[int64][]string {
+	idx := map[int64][]string{}
+	add := func(p string) {
+		fi, err := os.Stat(p)
+		if err == nil && fi.Mode().IsRegular() {
+			idx[fi.Size()] = append(idx[fi.Size()], p)
+		}
+	}
+	for _, root := range n.cfg.Models.Adopt {
+		real, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			n.log.Warn("adopt root", "path", root, "err", err)
+			continue
+		}
+		filepath.WalkDir(real, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				n.log.Warn("adopt scan", "path", p, "err", err)
+				return nil
+			}
+			if d.IsDir() {
+				if p != real && strings.HasPrefix(d.Name(), ".") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			add(p)
+			return nil
+		})
+	}
+	for _, vc := range n.cfg.Models.ViiworkConfigs {
+		paths, err := viiworkModelPaths(vc)
+		if err != nil {
+			n.log.Warn("viiwork config", "file", vc, "err", err)
+			continue
+		}
+		for _, p := range paths {
+			if _, err := os.Stat(p); err != nil {
+				n.log.Warn("viiwork model path not on this host (container path?); add its host directory to models.adopt", "config", vc, "path", p)
+				continue
+			}
+			dir := filepath.Dir(p)
+			entries, _ := os.ReadDir(dir)
+			for _, e := range entries {
+				if !e.IsDir() {
+					add(filepath.Join(dir, e.Name()))
+				}
+			}
+		}
+	}
+	return idx
+}
+
+func (n *Node) jobsLocked() []*job {
+	out := make([]*job, 0, len(n.jobs))
+	for _, j := range n.jobs {
+		out = append(out, j)
+	}
+	return out
+}
+
+func (n *Node) AddPeers(addrs []string) {
+	ps := make([]torrent.PeerInfo, 0, len(addrs))
+	for _, a := range addrs {
+		// Not Trusted: a local peer can still serve bad pieces (broken
+		// disk, stale file), and anacrolix only bans untrusted peers for it.
+		ps = append(ps, torrent.PeerInfo{Addr: torrent.StringAddr(a), Source: torrent.PeerSourceDirect})
+	}
+	n.mu.Lock()
+	n.peers = ps
+	jobs := n.jobsLocked()
+	n.mu.Unlock()
+	for _, j := range jobs {
+		if t := j.torrent(); t != nil && len(ps) > 0 {
+			t.AddPeers(ps)
+		}
+	}
+}
+
+func (n *Node) Ensure(id string) (ModelStatus, error) {
+	n.mu.Lock()
+	if n.cat == nil {
+		n.mu.Unlock()
+		return ModelStatus{}, ErrNoCatalog
+	}
+	if _, ok := n.cat.Model(id); !ok {
+		n.mu.Unlock()
+		return ModelStatus{}, ErrUnknownModel
+	}
+	if !n.wantedLocked(id) {
+		n.extraWant[id] = true
+		n.reconcileLocked(false)
+	}
+	n.mu.Unlock()
+	st, _ := n.ModelStatus(id)
+	if st.NoSpace {
+		return st, ErrNoSpace
+	}
+	return st, nil
+}

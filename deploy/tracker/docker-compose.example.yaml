@@ -1,0 +1,18 @@
+services:
+  opentracker:
+    build: .
+    network_mode: host   # keep real client source IPs for UDP announces
+    restart: unless-stopped
+
+  web:
+    # caddy:2-alpine pinned by multi-arch index digest, resolved 2026-09-21
+    # (`docker buildx imagetools inspect caddy:2-alpine`).
+    image: caddy:2-alpine@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+    container_name: viiwork-parrot-web
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      # Copy Caddyfile.example to Caddyfile (git-ignored) and fill in its
+      # placeholders before bringing this up.
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - <PUBLIC_DIR>:/srv:ro

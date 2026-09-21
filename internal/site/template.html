@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>🦜 viiwork-parrot — model manifest</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%9C%3C/text%3E%3C/svg%3E">
+<meta name="description" content="Signed manifest of the models viiwork-parrot seeds: magnet links, per-file torrents, and the ed25519 key to verify them.">
+<style>
+  :root{
+    --bg:#eef1ec;
+    --bg-panel:#e3e8dd;
+    --bg-panel-2:#dbe1d4;
+    --band:#132228;
+    --band-text:#eef1ec;
+    --text:#182422;
+    --text-dim:#51605a;
+    --line:#c6cec0;
+    --accent:#8a4e1c;
+    --accent-strong:#6e3d14;
+    --verified:#2b6b49;
+    --mono-bg:#e2e7da;
+    --mono-text:#20302a;
+    --focus:#1c6e8c;
+    --radius:3px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#101a1c;
+      --bg-panel:#16232a;
+      --bg-panel-2:#1c2c30;
+      --band:#0a1315;
+      --band-text:#eef1ec;
+      --text:#dee6e1;
+      --text-dim:#93a49c;
+      --line:#2b3d3e;
+      --accent:#e2a458;
+      --accent-strong:#f1bd7c;
+      --verified:#79cc9e;
+      --mono-bg:#0e1a1b;
+      --mono-text:#c9dcd3;
+      --focus:#63c1e6;
+    }
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    line-height:1.55;
+    font-size:16px;
+  }
+  h1,h2,h3{
+    font-family:Georgia,"Iowan Old Style","Palatino Linotype","Book Antiqua",serif;
+    font-weight:600;
+    line-height:1.2;
+    margin:0 0 .4em;
+  }
+  a{color:var(--accent)}
+  a:hover{color:var(--accent-strong)}
+  a:focus-visible,summary:focus-visible,details:focus-visible{
+    outline:2px solid var(--focus);
+    outline-offset:2px;
+  }
+  code,.mono{
+    font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,"Liberation Mono",monospace;
+    font-size:.92em;
+  }
+  code{
+    background:var(--mono-bg);
+    color:var(--mono-text);
+    padding:.1em .35em;
+    border-radius:var(--radius);
+    word-break:break-all;
+  }
+  .wrap{max-width:52rem;margin:0 auto;padding-inline:1.25rem}
+
+  header.band, footer.band{
+    background:var(--band);
+    color:var(--band-text);
+    padding-block:2.2rem;
+  }
+  header.band{padding-bottom:2.4rem}
+  header.band h1{font-size:clamp(1.6rem,4vw,2.1rem);color:var(--band-text)}
+  header.band .tagline{
+    max-width:38rem;
+    color:#c7d2cc;
+    font-size:1rem;
+  }
+  header.band .tagline a{color:#e6c398}
+  header.band .tagline a:hover{color:#f2d8ae}
+
+  main{padding-block:2.5rem 1rem}
+  section{margin-block:2.75rem}
+  section > h2{font-size:1.5rem}
+  section > .sub{color:var(--text-dim);margin:-.2em 0 1.1em;font-size:.95rem}
+
+  article.model{
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    background:var(--bg-panel);
+    margin-block-end:1.5rem;
+    overflow:hidden;
+  }
+  article.model .model-head{
+    padding:1rem 1.1rem .9rem;
+    border-bottom:1px solid var(--line);
+  }
+  article.model h3{
+    font-size:1.15rem;
+    font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
+    font-weight:600;
+  }
+  dl.meta{
+    display:flex;
+    flex-wrap:wrap;
+    gap:.3rem 1.6rem;
+    margin:.5rem 0 0;
+  }
+  dl.meta > div{display:flex;gap:.4em;align-items:baseline}
+  dl.meta dt{color:var(--text-dim);font-size:.85rem}
+  dl.meta dd{margin:0}
+
+  table.files{width:100%;border-collapse:collapse;font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;font-size:.88rem}
+  table.files th, table.files td{padding:.55rem .9rem;text-align:left;vertical-align:top}
+  table.files thead th{
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    font-size:.78rem;
+    color:var(--text-dim);
+    font-weight:600;
+    border-bottom:1px solid var(--line);
+  }
+  table.files tbody tr + tr td{border-top:1px solid var(--line)}
+  table.files td code{background:transparent;padding:0}
+  .links{display:flex;gap:1rem;flex-wrap:wrap}
+  .links a{white-space:nowrap}
+  details.copy{margin-top:.35rem}
+  details.copy summary{cursor:pointer;color:var(--text-dim);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:.78rem}
+  details.copy code{display:block;margin-top:.3rem;overflow-wrap:anywhere;white-space:pre-wrap}
+
+  pre{
+    background:var(--mono-bg);
+    color:var(--mono-text);
+    padding:.9rem 1rem;
+    border-radius:var(--radius);
+    overflow-x:auto;
+    font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
+    font-size:.88rem;
+  }
+  ul.plain{list-style:none;margin:0;padding:0}
+  ul.trackers li{
+    font-family:ui-monospace,"SF Mono","Cascadia Mono",Consolas,monospace;
+    font-size:.88rem;
+    padding:.3rem 0;
+    border-bottom:1px solid var(--line);
+  }
+  ul.trackers li:last-child{border-bottom:none}
+
+  dl.integrity{margin:0}
+  dl.integrity div{margin-block:.6rem}
+  dl.integrity dt{color:var(--text-dim);font-size:.85rem;margin-bottom:.15rem}
+  dl.integrity dd{margin:0}
+  .verified{color:var(--verified);font-weight:600}
+
+  footer.band{margin-top:3rem;font-size:.85rem;color:#a9b6b0}
+  footer.band a{color:#cfd9d2}
+  footer.band p{margin:.3em 0}
+
+  @media (max-width:640px){
+    table.files thead{position:absolute;left:-9999px;top:-9999px}
+    table.files, table.files tbody, table.files tr, table.files td{display:block;width:100%}
+    table.files tr{padding:.7rem .9rem;border-top:1px solid var(--line)}
+    table.files tr:first-child{border-top:none}
+    table.files td{padding:.2rem 0}
+    table.files td::before{
+      content:attr(data-label);
+      display:block;
+      font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+      font-size:.72rem;
+      color:var(--text-dim);
+    }
+    dl.meta{gap:.2rem .9rem}
+  }
+</style>
+</head>
+<body>
+<header class="band">
+  <div class="wrap">
+    <h1>🦜 viiwork-parrot</h1>
+    <p class="tagline">A self-hosted BitTorrent tracker for viiwork's models. It seeds viiwork's own mesh first, but the swarm is open to anyone — a companion to <a href="https://pirateface.co/">Pirate Face</a>.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section id="manifest">
+    <h2>Manifest</h2>
+    <p class="sub">{{len .Models}} model{{if ne (len .Models) 1}}s{{end}}, generated {{.Generated}}.</p>
+
+    {{range .Models}}
+    <article class="model">
+      <div class="model-head">
+        <h3>{{.ID}}</h3>
+        <dl class="meta">
+          <div><dt>source</dt><dd><a href="{{.HFTreeURL}}">{{.HFRepo}}</a> <code>{{.ShortRevision}}</code></dd></div>
+          <div><dt>license</dt><dd>{{.License}}</dd></div>
+          <div><dt>size</dt><dd>{{.TotalSize}}</dd></div>
+        </dl>
+      </div>
+      <table class="files">
+        <thead>
+          <tr><th>file</th><th>size</th><th>get</th><th>sha256</th></tr>
+        </thead>
+        <tbody>
+          {{range .Files}}
+          <tr>
+            <td data-label="file"><code>{{.DiskName}}</code></td>
+            <td data-label="size">{{.Size}}</td>
+            <td data-label="get">
+              <span class="links">
+                <a href="{{.Magnet}}">magnet</a>
+                <a href="{{.TorrentHref}}">.torrent</a>
+              </span>
+              <details class="copy">
+                <summary>copy magnet</summary>
+                <code>{{.Magnet}}</code>
+              </details>
+            </td>
+            <td data-label="sha256">
+              <details>
+                <summary><code title="{{.SHA256}}">{{.ShortSHA256}}&hellip;</code></summary>
+                <code>{{.SHA256}}</code>
+              </details>
+            </td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </article>
+    {{end}}
+  </section>
+
+  <section id="how-to-use">
+    <h2>Getting the files</h2>
+    <p>Open a magnet link in any BitTorrent client. Each one carries a Hugging Face web seed, so the download starts immediately even with zero peers on the swarm.</p>
+    <p>Or point a running <code>viiwork-parrot</code> node at a model and let it do the rest:</p>
+    <pre><code>models:
+  want: [{{if .Models}}{{(index .Models 0).ID}}{{else}}model-id{{end}}]</code></pre>
+    <p>It downloads every file, verifies each sha256, and starts seeding automatically. Source and setup instructions live at <a href="{{.RepoURL}}">{{.RepoURL}}</a>.</p>
+  </section>
+
+  <section id="trackers">
+    <h2>Trackers</h2>
+    <p>Every torrent above announces to:</p>
+    <ul class="plain trackers">
+      {{range .Trackers}}<li><code>{{.}}</code></li>
+      {{end}}
+    </ul>
+  </section>
+
+  <section id="integrity">
+    <h2>Verifying the manifest</h2>
+    <p>This page is generated from <code>catalog.json</code>, which is <span class="verified">ed25519-signed</span> so a node — or you — can confirm nobody tampered with it in transit.</p>
+    <dl class="integrity">
+      <div>
+        <dt>catalog</dt>
+        <dd><a href="catalog.json">catalog.json</a> and its <a href="catalog.json.sig">signature</a></dd>
+      </div>
+      <div>
+        <dt>public key</dt>
+        <dd><code>{{.PubKey}}</code></dd>
+      </div>
+      <div>
+        <dt>generated</dt>
+        <dd>{{.Generated}}</dd>
+      </div>
+    </dl>
+  </section>
+
+</main>
+
+<footer class="band">
+  <div class="wrap">
+    <p>Generated by viiwork-parrot from its signed catalog. Verify a file's sha256 before you trust it.</p>
+    <p><a href="{{.RepoURL}}">{{.RepoURL}}</a></p>
+  </div>
+</footer>
+</body>
+</html>

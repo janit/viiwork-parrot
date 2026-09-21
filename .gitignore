@@ -1,0 +1,8 @@
+bin/
+dist/
+*.key
+
+# Operator-filled copies of the generic tracker templates (see
+# deploy/tracker/README.md); never the source of truth.
+deploy/tracker/Caddyfile
+deploy/tracker/docker-compose.yaml

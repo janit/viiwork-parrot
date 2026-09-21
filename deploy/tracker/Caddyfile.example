@@ -1,0 +1,55 @@
+{
+	auto_https off
+	admin off
+}
+
+# Host-less site address: your public-facing Caddy (Cloudflare-proxied, or
+# whatever fronts this tracker) forwards requests with the public
+# Host header, and a site address naming this host's own tailnet IP would act
+# as a host matcher instead — those requests would then match no site and get
+# Caddy's empty 200. `bind` restricts the listener to the tailnet address and
+# loopback instead, without needing the site block to also match the Host.
+:8080 {
+	bind <TAILNET_IP> 127.0.0.1
+
+	# Trust CF-Connecting-IP (which sets opentracker's peer IP via
+	# WANT_IP_FROM_PROXY) only when the request itself arrived from your
+	# public-facing Caddy's tailnet address. Any other tailnet host reaching
+	# this port directly could otherwise spoof it and forge other peers' IPs
+	# in the swarm. From the front end without CF-Connecting-IP (a request
+	# that reached it without going through Cloudflare), fall back to the
+	# first hop of the X-Forwarded-For the front end's Caddy set, else to the
+	# front end itself — never an empty X-Forwarded-For.
+	@frontend_cf {
+		remote_ip <FRONTEND_TAILNET_IP>
+		header_regexp cf CF-Connecting-IP ^\s*([0-9A-Fa-f:.]+)\s*$
+	}
+	@frontend_xff {
+		remote_ip <FRONTEND_TAILNET_IP>
+		header_regexp xff X-Forwarded-For ^\s*([0-9A-Fa-f:.]+)
+	}
+	handle /announce* {
+		handle @frontend_cf {
+			reverse_proxy 127.0.0.1:6969 {
+				header_up X-Forwarded-For {re.cf.1}
+			}
+		}
+		handle @frontend_xff {
+			reverse_proxy 127.0.0.1:6969 {
+				header_up X-Forwarded-For {re.xff.1}
+			}
+		}
+		handle {
+			reverse_proxy 127.0.0.1:6969 {
+				header_up X-Forwarded-For {http.request.remote.host}
+			}
+		}
+	}
+	handle /scrape* {
+		reverse_proxy 127.0.0.1:6969
+	}
+	handle {
+		root * <PUBLIC_DIR>
+		file_server
+	}
+}

@@ -1,0 +1,19 @@
+[Unit]
+Description=viiwork-parrot model seeding node (%i)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=%i
+ExecStart=/usr/local/bin/viiwork-parrot daemon --config /etc/viiwork-parrot/viiwork-parrot.yaml
+StateDirectory=viiwork-parrot
+# Classic (pread/pwrite) torrent storage IO instead of anacrolix's default
+# mmap: a seeded file truncated by its owner is then a read error, not a
+# SIGBUS. The daemon also sets this itself (re-exec) when it is unset.
+Environment=TORRENT_STORAGE_DEFAULT_FILE_IO=classic
+Restart=on-failure
+RestartSec=10
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
