@@ -194,7 +194,9 @@ func lpdConnNew(network string, host string, lpd *lpdServer, config LocalService
 			cancel()
 			return nil
 		}
-		m.logger.Printf("Multicasting on %v\n", m.mcPublisher.LocalAddr().String())
+		// viiwork-parrot patch: debug, not the default level (logged on every
+		// LPD (re)start). See VIIWORK-PARROT-PATCH.md.
+		m.logger.Levelf(log.Debug, "Multicasting on %v", m.mcPublisher.LocalAddr().String())
 	}
 
 	return m
@@ -259,7 +261,9 @@ func (m *lpdConn) handleAnnouncePacket(client lpdClient, buf []byte, from *net.U
 	if m.mcPublisher != nil {
 		publisherAddr := m.mcPublisher.LocalAddr().(*net.UDPAddr)
 		if client.LocalPort() == addr.Port && from.IP.Equal(publisherAddr.IP) {
-			m.logger.Println("receiver", "Ignoring own message")
+			// viiwork-parrot patch: debug, not the default level (every own
+			// announce loops back). See VIIWORK-PARROT-PATCH.md.
+			m.logger.LevelPrint(log.Debug, "receiver ", "Ignoring own message")
 			return
 		}
 	}

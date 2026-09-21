@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.2.1 — 2026-09-21
+
+### Fixes
+
+- **seed_only_existing nodes showed every per-file model as `absent`.**
+  A per-file model's catalog entry has a companion `README.md` next to its
+  `.gguf`. On a `seed_only_existing` node with an empty data_dir the README
+  exists nowhere locally, so its job was (correctly) `absent` — and the
+  model's status took the lowest file state, so a model whose `.gguf` had
+  been found (via `viiwork_configs` symlinks, `adopt`, or data_dir),
+  verified and was seeding in place showed as `absent` at "100.0%", with the
+  README's error, and `/ensure` answered 409 instead of the path. For a
+  model whose main file is a `.gguf` that is seeding, a missing
+  documentation companion (README\*, LICENSE\*, NOTICE\*, \*.md, \*.txt)
+  no longer affects the model's state, error, path or percentage (it is
+  still listed as absent under the model's files). Anything else missing —
+  a split `.gguf` shard, a non-GGUF model's shard or config — still makes
+  the model absent. So on a `seed_only_existing` node, `/ensure` 200 means
+  "weights complete and verified; a documentation companion may be absent
+  on this node". `DONE` is now rounded down, so 100.0% means every
+  byte is present.
+- **No more "short write" warning on every hashed piece.** Verifying or
+  seeding with classic file IO (what the daemon uses) logged
+  `finished hashing piece ... correct=true err="short write"` at WARN for
+  almost every piece, in folder and per-file models alike. The error was
+  spurious: the vendored anacrolix's classic reader ends each per-file read
+  by returning `io.ErrShortWrite` once it has passed on exactly the bytes
+  asked for. Every piece was always hashed in full and verification results
+  were correct; the bogus error also made anacrolix skip smart-ban
+  bookkeeping and peer blame for hash failures. Now treated as success
+  (patch documented in `third_party/anacrolix-torrent/VIIWORK-PARROT-PATCH.md`).
+  With the fix, anacrolix's smart-ban and piece blame work again as designed:
+  peers that send bad pieces are banned (by IP, until the downloading
+  daemon restarts).
+- **`status` shows an idle rate as `0`, not `unlimited`.** `DOWN`/`UP` are
+  measured rates; `unlimited` is kept for limits (`limit`).
+- **Quieter local peer discovery.** anacrolix's BEP-14 "receiver Ignoring
+  own message" (logged for each of our own announces) and "Multicasting on
+  …" are now debug-level.
+- **Publishing uploads folder models' torrents.** `scripts/catalog-publish.sh`
+  now collects a folder model's single model-level torrent along with the
+  per-file ones.
+- **The UDP home tracker is no longer in default announce lists or
+  magnets.** Torrents and catalog magnets were regenerated without it;
+  infohashes are unchanged (the announce list is outside the info dict).
+
 ## v0.2.0 — 2026-09-21
 
 Changes since v0.1.0, to be released as v0.2.0.

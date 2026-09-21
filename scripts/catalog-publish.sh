@@ -22,7 +22,7 @@ bin/viiwork-parrot catalog sign --key "$VIIWORK_PARROT_KEY" --in dist/catalog.js
 bin/viiwork-parrot catalog verify --in dist/catalog.json
 bin/viiwork-parrot catalog page --in dist/catalog.json --out dist/index.html
 
-for ih in $(jq -r '.models[].files[].infohash' dist/catalog.json); do
+for ih in $(jq -r '.models[] | (.infohash // empty), (.files[].infohash // empty)' dist/catalog.json); do
     cp "torrents/$ih.torrent" dist/torrents/
 done
 

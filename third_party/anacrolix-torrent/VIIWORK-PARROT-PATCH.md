@@ -255,6 +255,59 @@ with `O_CREATE|O_EXCL` and no `O_TRUNC`.
 `TestDirSeedingLeavesEmptyFilesAlone` and `TestDirDownloadFromWebSeed` (the
 download record still matches while seeding) in `internal/node` cover it.
 
+## Third patch: spurious "short write" when hashing with classic file IO (v0.2.1)
+
+With `TORRENT_STORAGE_DEFAULT_FILE_IO=classic` (what the daemon uses),
+verifying or seeding logged, for almost every piece:
+
+```
+level=WARN msg="finished hashing piece" ... correct=true failedPeers=map[] err="short write"
+```
+
+Cause: `filePieceImpl.WriteTo` (`storage/file-piece.go`) hashes each file
+extent of a piece via `fileReader.writeToN(w, n)`. The classic
+implementation, `classicFileReader.writeToN` (`storage/file-io-classic.go`),
+wraps the hasher in `limitWriter` and calls `os.File.WriteTo`, which (for a
+non-socket writer) is a plain `io.Copy` in 32 KiB chunks. `limitWriter`
+forwards only the first `n` bytes and ends the copy by returning
+`io.ErrShortWrite` for the rest of the chunk it was handed. So whenever an
+extent ends before the end of its file — the last extent of every piece
+that doesn't end exactly at a file boundary, in single-file and multi-file
+torrents alike — the full `n` bytes were hashed and `io.ErrShortWrite`
+came back anyway. `Torrent.finishHash` logs any error other than
+nil/`io.EOF` at WARN. The mmap IO and the borrowed-writer classic reader
+(`io.Copy` over an `io.SectionReader`, used while a write handle is open)
+don't go through `limitWriter` and were unaffected.
+
+The data was always hashed in full: the error is only produced after
+exactly `n` bytes reached the hasher, and an extent that can end mid-file
+is always the last one in the piece, so the early return in
+`filePieceImpl.WriteTo` never skipped any bytes; hash results were correct.
+Side effects of the bogus error were limited to: the WARN log, smart-ban
+bookkeeping being skipped for such pieces, and peers not being blamed for a
+piece that genuinely failed (`pieceHashed` only blames on a nil IO error).
+
+The patch (marked "viiwork-parrot patch" in `classicFileReader.writeToN`)
+treats `io.ErrShortWrite` with `limitWriter.rem == 0` — exactly `n` bytes
+written — as success. `storage/file-piece-writeto_test.go`
+(`TestFilePieceWriteToNoSpuriousShortWrite`) hashes every piece of a
+multi-file torrent (zero-length file, files spanning piece boundaries, a
+piece ending on a file boundary) and a single-file torrent with classic and
+mmap IO, asserting no error, correct hashes, and that a corrupted byte fails
+exactly its piece. Run it from `third_party/anacrolix-torrent` (it is a
+separate module, not covered by the root `go test ./...`).
+
+## Fourth patch: BEP-14 LSD log noise (v0.2.1)
+
+`bep14.go` logs through the global `log.Default` (not the client's
+`Slogger`, so it can't be filtered from viiwork-parrot's slog handler) and
+printed two routine messages at the default level: "receiver Ignoring own
+message" for every one of our own announces looped back by the multicast
+group, and "Multicasting on <addr>" on every LSD (re)start. Both are now
+logged at `log.Debug` (marked "viiwork-parrot patch"); errors and "Adding
+peer" are unchanged. `TestLPDOwnMessageLoggedAtDebug` (`bep14_test.go`)
+covers the first.
+
 ## What was excluded from the copy
 
 - `go.work` / `go.work.sum`: upstream's own multi-module development

@@ -10,7 +10,7 @@ import (
 )
 
 func magnet(ih, ws string) string {
-	m := "magnet:?xt=urn:btih:" + ih + "&tr=udp%3A%2F%2Ft.256.fi%3A6969%2Fannounce"
+	m := "magnet:?xt=urn:btih:" + ih + "&tr=udp%3A%2F%2Ftracker.example%3A6969%2Fannounce"
 	if ws != "" {
 		m += "&ws=" + url.QueryEscape(ws)
 	}
@@ -118,7 +118,7 @@ func TestMagnetSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(tr, []string{"udp://t.256.fi:6969/announce"}) || !reflect.DeepEqual(ws, []string{"https://huggingface.co/o/r/resolve/x/m.gguf"}) {
+	if !reflect.DeepEqual(tr, []string{"udp://tracker.example:6969/announce"}) || !reflect.DeepEqual(ws, []string{"https://huggingface.co/o/r/resolve/x/m.gguf"}) {
 		t.Fatalf("trackers %v web-seeds %v", tr, ws)
 	}
 	f.InfoHash = strings.Repeat("d", 40)

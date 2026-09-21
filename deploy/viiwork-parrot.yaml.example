@@ -17,6 +17,8 @@ catalog:
 models:
   want: [qwen3.8-27b-q4kxl]   # ids from the catalog; ["*"] = full seed
   seed_only_existing: false   # true: adopt+seed what is on disk, never download
+                              # (a GGUF model whose weights are here counts as seeding
+                              #  even if its README/LICENSE companion is not)
   prune: false                # true: delete files of models removed from catalog
   adopt:                      # extra dirs/files scanned (recursively, symlinks followed)
     - /home/user/models       # for existing copies under any name; seeded in place.

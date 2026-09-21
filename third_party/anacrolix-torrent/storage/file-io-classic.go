@@ -132,7 +132,15 @@ func (c classicFileReader) writeToN(w io.Writer, n int64) (written int64, err er
 		rem: n,
 		w:   w,
 	}
-	return c.File.WriteTo(&lw)
+	written, err = c.File.WriteTo(&lw)
+	// viiwork-parrot patch: limitWriter stops os.File.WriteTo's io.Copy loop by
+	// returning io.ErrShortWrite once n bytes have been passed on, so every
+	// extent ending before EOF (i.e. nearly every piece) reported "short
+	// write" despite being read in full. Having written exactly n is success.
+	if err == io.ErrShortWrite && lw.rem == 0 {
+		err = nil
+	}
+	return
 }
 
 func (c classicFileReader) seekDataOrEof(offset int64) (ret int64, err error) {

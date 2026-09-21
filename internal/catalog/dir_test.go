@@ -9,7 +9,7 @@ import (
 )
 
 func dirMagnet(ih, repo string) string {
-	return "magnet:?xt=urn:btih:" + ih + "&tr=udp%3A%2F%2Ft.256.fi%3A6969%2Fannounce&ws=" + url.QueryEscape(DirWebSeed(repo))
+	return "magnet:?xt=urn:btih:" + ih + "&tr=udp%3A%2F%2Ftracker.example%3A6969%2Fannounce&ws=" + url.QueryEscape(DirWebSeed(repo))
 }
 
 func sampleDirModel() Model {

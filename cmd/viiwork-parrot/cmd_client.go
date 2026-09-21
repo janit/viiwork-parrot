@@ -49,12 +49,21 @@ func writeStatus(w io.Writer, st []node.ModelStatus) error {
 			detail = m.Error
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%.1f%%\t%s\t%s\t%d\t%s\n", m.ID, m.State, m.Percent,
-			units.FormatRate(m.DownRate), units.FormatRate(m.UpRate), m.Peers, detail)
+			formatObservedRate(m.DownRate), formatObservedRate(m.UpRate), m.Peers, detail)
 		if len(m.Duplicates) > 0 {
 			fmt.Fprintf(tw, "  duplicates: %s\n", strings.Join(m.Duplicates, ", "))
 		}
 	}
 	return tw.Flush()
+}
+
+// formatObservedRate renders a measured transfer rate. Unlike a limit, where
+// 0 means "unlimited" (units.FormatRate), a measured 0 means idle.
+func formatObservedRate(bps int64) string {
+	if bps <= 0 {
+		return "0"
+	}
+	return units.FormatRate(bps)
 }
 
 func runLimit(args []string) error {

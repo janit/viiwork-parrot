@@ -42,7 +42,6 @@ func TestBuild(t *testing.T) {
 		t.Fatalf("url-list %v", r.MetaInfo.UrlList)
 	}
 	wantAnnounce := [][]string{
-		{"udp://t.256.fi:6969/announce"},
 		{"https://parrot.lnx.fi/announce"},
 		{"udp://tracker.pirateface.co:6969/announce"},
 		{"udp://tracker.opentrackr.org:1337/announce"},

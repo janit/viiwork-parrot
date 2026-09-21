@@ -1,5 +1,11 @@
 package node
 
+import (
+	"math"
+	"path"
+	"strings"
+)
+
 type FileStatus struct {
 	Name       string   `json:"name"`
 	Path       string   `json:"path,omitempty"`
@@ -98,22 +104,45 @@ func (n *Node) ModelStatus(id string) (ModelStatus, bool) {
 	ms := ModelStatus{ID: id, State: StateSeeding}
 	var size, done int64
 	main := mainInfoHash(m)
-	for _, j := range jobs {
-		fs, peers, seeds, up, noSpace := j.status()
+	type jobStatus struct {
+		fs           FileStatus
+		peers, seeds int
+		up           int64
+		noSpace      bool
+	}
+	sts := make([]jobStatus, len(jobs))
+	mainSeeding := false
+	for i, j := range jobs {
+		s := &sts[i]
+		s.fs, s.peers, s.seeds, s.up, s.noSpace = j.status()
+		if j.f.InfoHash == main && s.fs.State == StateSeeding && !m.IsDir() && isGGUF(j.f.Name) {
+			mainSeeding = true
+		}
+	}
+	for i, j := range jobs {
+		fs := sts[i].fs
 		ms.Files = append(ms.Files, fs)
+		ms.Peers += sts[i].peers
+		ms.Seeds += sts[i].seeds
+		ms.Uploaded += sts[i].up
+		ms.UpRate += rates[j.f.InfoHash].upRate
+		ms.DownRate += rates[j.f.InfoHash].downRate
+		if mainSeeding && fs.State == StateAbsent && isDocCompanion(j.f.Name) {
+			// A documentation companion (the HF README.md) that a
+			// seed_only_existing node doesn't have: it's still listed as
+			// absent in Files, but it doesn't make a GGUF model whose main
+			// file is seeding "absent". Any other absent file (a shard,
+			// config.json, …) still does.
+			continue
+		}
 		if stateRank[fs.State] < stateRank[ms.State] {
 			ms.State = fs.State
 		}
 		if ms.Error == "" {
 			ms.Error = fs.Error
 		}
-		ms.NoSpace = ms.NoSpace || noSpace
+		ms.NoSpace = ms.NoSpace || sts[i].noSpace
 		ms.Duplicates = append(ms.Duplicates, fs.Duplicates...)
-		ms.Peers += peers
-		ms.Seeds += seeds
-		ms.Uploaded += up
-		ms.UpRate += rates[j.f.InfoHash].upRate
-		ms.DownRate += rates[j.f.InfoHash].downRate
 		size += fs.Size
 		done += fs.Done
 		if j.f.InfoHash == main && fs.State == StateSeeding {
@@ -124,10 +153,27 @@ func (n *Node) ModelStatus(id string) (ModelStatus, bool) {
 		ms.State = StateQueued
 	}
 	if size > 0 {
-		ms.Percent = float64(done) * 100 / float64(size)
+		// Rounded down to 0.1 so "100.0%" means every byte is there.
+		ms.Percent = math.Floor(float64(done)*1000/float64(size)) / 10
 	}
 	if ms.State != StateSeeding {
 		ms.Path = ""
 	}
 	return ms, true
+}
+
+// isGGUF reports whether a per-file model's file is a .gguf.
+func isGGUF(name string) bool { return strings.HasSuffix(strings.ToLower(name), ".gguf") }
+
+// isDocCompanion reports whether a file is documentation that a model never
+// needs to load: README*, LICENSE*, NOTICE*, *.md, *.txt (base name,
+// case-insensitive).
+func isDocCompanion(name string) bool {
+	b := strings.ToLower(path.Base(name))
+	for _, p := range []string{"readme", "license", "notice"} {
+		if strings.HasPrefix(b, p) {
+			return true
+		}
+	}
+	return strings.HasSuffix(b, ".md") || strings.HasSuffix(b, ".txt")
 }

@@ -51,6 +51,16 @@ func TestRenderRealCatalog(t *testing.T) {
 		if !strings.Contains(out, m.License) {
 			t.Errorf("output missing license %q for model %q", m.License, m.ID)
 		}
+		if m.IsDir() {
+			// A folder model has one model-level torrent; its files have none.
+			if !strings.Contains(out, html.EscapeString(m.Magnet)) {
+				t.Errorf("output missing magnet href for folder model %q", m.ID)
+			}
+			if torrentHref := "torrents/" + m.InfoHash + ".torrent"; !strings.Contains(out, torrentHref) {
+				t.Errorf("output missing torrent href %q", torrentHref)
+			}
+			continue
+		}
 		for _, f := range m.Files {
 			// html/template HTML-escapes attribute values (e.g. "&" ->
 			// "&amp;"), which is correct output, so compare against the
@@ -172,8 +182,8 @@ func TestSiteHost(t *testing.T) {
 		want     string
 	}{
 		{nil, defaultSiteHost},
-		{[]string{"udp://t.256.fi:6969/announce"}, defaultSiteHost},
-		{[]string{"udp://t.256.fi:6969/announce", "https://parrot.lnx.fi/announce"}, "parrot.lnx.fi"},
+		{[]string{"udp://tracker.example:6969/announce"}, defaultSiteHost},
+		{[]string{"udp://tracker.example:6969/announce", "https://parrot.lnx.fi/announce"}, "parrot.lnx.fi"},
 	}
 	for _, tc := range cases {
 		if got := siteHost(tc.trackers); got != tc.want {

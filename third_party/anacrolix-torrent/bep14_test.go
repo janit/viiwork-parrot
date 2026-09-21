@@ -326,3 +326,47 @@ func waitForPeers(t *testing.T, tor *Torrent, num int) {
 		tor.cl.event.Wait()
 	}
 }
+
+type capturingLogHandler struct {
+	mu      sync.Mutex
+	records []log.Record
+}
+
+func (h *capturingLogHandler) Handle(r log.Record) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r)
+}
+
+// viiwork-parrot patch: our own multicast announce looping back must be logged
+// at debug, not the default level (it was logged on every announce).
+func TestLPDOwnMessageLoggedAtDebug(t *testing.T) {
+	config := TestingConfig(t)
+	cl, err := NewClient(config)
+	qt.Assert(t, qt.IsNil(err))
+	t.Cleanup(func() { cl.Close() })
+	setupTestLPD(cl)
+
+	pub, err := net.DialUDP("udp4", nil, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 6771})
+	qt.Assert(t, qt.IsNil(err))
+	t.Cleanup(func() { pub.Close() })
+	h := &capturingLogHandler{}
+	cl.lpd.conn4.mcPublisher = pub
+	cl.lpd.conn4.logger = log.Logger{}.WithFilterLevel(log.Debug).WithDefaultLevel(log.Info)
+	cl.lpd.conn4.logger.Handlers = []log.Handler{h}
+
+	own := &net.UDPAddr{IP: pub.LocalAddr().(*net.UDPAddr).IP, Port: cl.LocalPort()}
+	injectAnnounce(t, cl, own, []string{"AABBCCDD1122334455667788AABBCCDD11223344"})
+	qt.Assert(t, qt.HasLen(cl.lpd.peers, 0))
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	found := false
+	for _, r := range h.records {
+		if strings.Contains(r.Msg.String(), "Ignoring own message") {
+			found = true
+			qt.Check(t, qt.Equals(r.Level, log.Debug))
+		}
+	}
+	qt.Assert(t, qt.IsTrue(found))
+}

@@ -1023,3 +1023,158 @@ func TestRetryFailedOnSetCatalog(t *testing.T) {
 	n.SetCatalog(fx.cat)
 	waitState(t, n, "tiny", StateSeeding)
 }
+
+// addCompanion adds a non-weights file (e.g. the HF README.md) as a further
+// single-file torrent of model id; it is served by fake HF but, like on a
+// real host, found nowhere locally.
+func (fx *fixture) addCompanion(id, name string, size int) {
+	src, sum := makeFile(fx.t, fx.t.TempDir(), name, size)
+	r, err := mktorrent.Build(mktorrent.Options{
+		Path: src, Name: name, WebSeed: fx.hf.URL + "/" + id + "/" + name,
+		Announce: [][]string{{"http://127.0.0.1:1/announce"}},
+	})
+	if err != nil {
+		fx.t.Fatal(err)
+	}
+	fx.mu.Lock()
+	fx.content["/"+id+"/"+name] = src
+	fx.mu.Unlock()
+	fx.src[r.InfoHash] = r.MetaInfo
+	for i := range fx.cat.Models {
+		if fx.cat.Models[i].ID == id {
+			fx.cat.Models[i].Files = append(fx.cat.Models[i].Files, catalog.File{Name: name, Size: int64(size), SHA256: sum, InfoHash: r.InfoHash, Magnet: r.Magnet})
+		}
+	}
+}
+
+// The teddy case (v0.2.0): seed_only_existing, empty data_dir, per-file
+// models (gguf + README.md) whose gguf is reachable only through a
+// viiwork_configs symlink or an adopt dir, and whose README exists nowhere.
+// The gguf is verified and seeded in place, and the model must say so, not
+// "absent" at "100.0%".
+func TestSeedOnlyExistingSeedsInPlaceWithoutCompanion(t *testing.T) {
+	fx := newFixture(t)
+	vwSrc, _ := fx.addModel("vw", "Vw-Q4.gguf", 1<<20)
+	fx.addCompanion("vw", "README.md", 7455)
+	adSrc, _ := fx.addModel("ad", "ad-Q6.gguf", 1<<20+3)
+	fx.addCompanion("ad", "README.md", 472)
+
+	// viiwork config -> symlink in a models dir -> real file elsewhere.
+	realDir := filepath.Join(t.TempDir(), "Vw-GGUF")
+	os.MkdirAll(realDir, 0o755)
+	data, _ := os.ReadFile(vwSrc)
+	real := filepath.Join(realDir, "Vw-UD-Q4_K_XL.gguf")
+	os.WriteFile(real, data, 0o444)
+	linkDir := t.TempDir()
+	link := filepath.Join(linkDir, "vw.gguf")
+	os.Symlink(real, link)
+	vwCfg := filepath.Join(t.TempDir(), "viiwork.yaml")
+	os.WriteFile(vwCfg, []byte("models:\n  - name: vw\n    path: "+link+"\n"), 0o644)
+
+	// adopt dir with a regular file in a subdirectory.
+	adoptDir := t.TempDir()
+	os.MkdirAll(filepath.Join(adoptDir, "gguf"), 0o755)
+	data, _ = os.ReadFile(adSrc)
+	adopted := filepath.Join(adoptDir, "gguf", "ad-Q6.gguf")
+	os.WriteFile(adopted, data, 0o644)
+
+	n := fx.node(func(n *Node) {
+		n.cfg.Models.Want = []string{"*"}
+		n.cfg.Models.SeedOnlyExisting = true
+		n.cfg.Models.ViiworkConfigs = []string{vwCfg}
+		n.cfg.Models.Adopt = []string{adoptDir}
+	})
+	n.SetCatalog(fx.cat)
+	for id, want := range map[string]string{"vw": link, "ad": adopted} {
+		st := waitState(t, n, id, StateSeeding)
+		if st.Path != want || st.Percent != 100 || st.Error != "" {
+			t.Fatalf("%s: %+v, want seeding in place at %s, 100%%, no error", id, st, want)
+		}
+		var readme *FileStatus
+		for i := range st.Files {
+			if st.Files[i].Name == "README.md" {
+				readme = &st.Files[i]
+			}
+		}
+		if readme == nil || readme.State != StateAbsent {
+			t.Fatalf("%s: README.md should still be listed as absent: %+v", id, st.Files)
+		}
+		if es, err := n.Ensure(id); err != nil || es.State != StateSeeding || es.Path != want {
+			t.Fatalf("%s: Ensure = %+v, %v", id, es, err)
+		}
+	}
+	if fx.hfHits.Load() != 0 {
+		t.Fatal("seed_only_existing must never download")
+	}
+}
+
+// A missing weights file (here a tiny extra .gguf) still makes the model
+// absent, and a model missing any counted byte never shows 100.0%.
+func TestSeedOnlyExistingMissingWeightsStaysAbsent(t *testing.T) {
+	fx := newFixture(t)
+	src, _ := fx.addModel("sh", "sh-00001-of-00002.gguf", 1<<20)
+	fx.addCompanion("sh", "sh-00002-of-00002.gguf", 10)
+	n := fx.node(func(n *Node) { n.cfg.Models.Want = []string{"sh"}; n.cfg.Models.SeedOnlyExisting = true })
+	os.MkdirAll(n.cfg.Node.DataDir, 0o755)
+	data, _ := os.ReadFile(src)
+	os.WriteFile(filepath.Join(n.cfg.Node.DataDir, "sh-00001-of-00002.gguf"), data, 0o644)
+	n.SetCatalog(fx.cat)
+	st := waitFileSeeding(t, n, "sh", "sh-00001-of-00002.gguf")
+	if st.State != StateAbsent || st.Percent >= 100 || st.Path != "" {
+		t.Fatalf("model missing a shard: state %s, %.4f%%, path %q", st.State, st.Percent, st.Path)
+	}
+}
+
+// waitFileSeeding waits (bounded, like waitState) until file name of model id
+// is seeding and returns the model's status at that point.
+func waitFileSeeding(t *testing.T, n *Node, id, name string) ModelStatus {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		st, _ := n.ModelStatus(id)
+		for _, f := range st.Files {
+			if f.Name == name && f.State == StateSeeding {
+				return st
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("model %s: file %s never seeding: %+v", id, name, st.Files)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// The companion exemption is GGUF-only: a per-file model whose main file
+// isn't a .gguf (MainFile falls back to Files[0]) and that lacks a shard
+// stays absent, and /ensure doesn't hand out an incomplete model.
+func TestSeedOnlyExistingNonGGUFMissingShardStaysAbsent(t *testing.T) {
+	fx := newFixture(t)
+	src, _ := fx.addModel("st", "model-00001-of-00002.safetensors", 1<<20)
+	fx.addCompanion("st", "model-00002-of-00002.safetensors", 1000)
+	fx.addCompanion("st", "config.json", 100)
+	fx.addCompanion("st", "README.md", 50)
+	n := fx.node(func(n *Node) { n.cfg.Models.Want = []string{"st"}; n.cfg.Models.SeedOnlyExisting = true })
+	os.MkdirAll(n.cfg.Node.DataDir, 0o755)
+	data, _ := os.ReadFile(src)
+	os.WriteFile(filepath.Join(n.cfg.Node.DataDir, "model-00001-of-00002.safetensors"), data, 0o644)
+	n.SetCatalog(fx.cat)
+	st := waitFileSeeding(t, n, "st", "model-00001-of-00002.safetensors")
+	if st.State != StateAbsent || st.Path != "" || st.Percent >= 100 {
+		t.Fatalf("incomplete non-GGUF model: state %s, path %q, %.4f%%", st.State, st.Path, st.Percent)
+	}
+	if es, err := n.Ensure("st"); err != nil || es.State != StateAbsent {
+		t.Fatalf("Ensure = %+v, %v; want absent", es, err)
+	}
+}
+
+func TestIsDocCompanion(t *testing.T) {
+	for name, want := range map[string]bool{
+		"README.md": true, "readme": true, "LICENSE": true, "License.txt": true, "NOTICE": true,
+		"docs/USAGE.MD": true, "notes.txt": true,
+		"config.json": false, "x-00002-of-00002.gguf": false, "model.safetensors": false, "tokenizer.model": false,
+	} {
+		if got := isDocCompanion(name); got != want {
+			t.Errorf("isDocCompanion(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

@@ -21,6 +21,16 @@ against) — no JavaScript, generated only from the public catalog. See
 `internal/site` for the template, and `scripts/catalog-publish.sh`, which
 generates and uploads it alongside `catalog.json` on every publish.
 
+## Seed-only nodes
+
+With `models.seed_only_existing: true` a node never downloads: it adopts and
+seeds only what is already on disk (data_dir, `models.adopt`,
+`models.viiwork_configs`). On such a node `/ensure` answers `200` when the
+model's weights are complete and verified; a documentation companion of a
+GGUF model (README\*, LICENSE\*, NOTICE\*, \*.md, \*.txt) may be absent on
+that node and is listed as `absent` under the model's files. Anything else
+missing (a shard, a config file) leaves the model `absent` (`409`).
+
 ## Folder models
 
 GGUF models are per-file: one single-file torrent per catalog file, stored
