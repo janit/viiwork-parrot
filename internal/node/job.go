@@ -250,8 +250,11 @@ func (j *job) findLocal() (string, []string, error) {
 		if err != nil || sameAsKept(fi) {
 			continue
 		}
-		sum, err := j.n.hashes.SHA256(p)
+		sum, err := j.n.hashes.SHA256Context(j.ctx, p)
 		if err != nil {
+			if j.ctx.Err() != nil {
+				return "", nil, j.ctx.Err()
+			}
 			if sum == "" {
 				j.n.log.Warn("adopt candidate", "path", p, "err", err)
 				continue
@@ -278,7 +281,7 @@ func (j *job) verifyDataPath(dp string, fi os.FileInfo) (mismatch bool, err erro
 	if fi.Size() != j.f.Size {
 		return true, fmt.Errorf("%s exists with size %d, catalog says %d; left untouched", dp, fi.Size(), j.f.Size)
 	}
-	sum, err := j.n.hashes.SHA256(dp)
+	sum, err := j.n.hashes.SHA256Context(j.ctx, dp)
 	if err != nil {
 		if sum == "" {
 			return false, err
@@ -493,7 +496,7 @@ func (j *job) download() {
 		j.finishDir(pieces)
 		return
 	}
-	sum, err := hashcache.HashFile(j.incomingPath())
+	sum, err := hashcache.HashFileContext(j.ctx, j.incomingPath())
 	if err != nil {
 		j.fail(err)
 		return
@@ -561,8 +564,8 @@ func (j *job) quarantine(got string, pieces int) {
 		j.fail(fmt.Errorf("%w; quarantine failed: %v", base, err))
 		return
 	}
-	dst := filepath.Join(q, j.f.DiskName()+"."+got[:12])
-	if err := os.Rename(j.incomingPath(), dst); err != nil {
+	dst, err := quarantineTo(j.incomingPath(), filepath.Join(q, j.f.DiskName()+"."+got[:12]))
+	if err != nil {
 		j.fail(fmt.Errorf("%w; quarantine failed: %v", base, err))
 		return
 	}
@@ -571,6 +574,25 @@ func (j *job) quarantine(got string, pieces int) {
 		return
 	}
 	j.fail(fmt.Errorf("%w; moved to %s", base, dst))
+}
+
+// quarantineTo moves src to dst, or to dst.1, dst.2, … when that name is
+// taken (the same bad content quarantined before), never replacing
+// anything already in quarantine. It returns the path used.
+func quarantineTo(src, dst string) (string, error) {
+	for i := 0; ; i++ {
+		d := dst
+		if i > 0 {
+			d = fmt.Sprintf("%s.%d", dst, i)
+		}
+		err := renameNoReplace(src, d)
+		if err == nil {
+			return d, nil
+		}
+		if !errors.Is(err, fs.ErrExist) || i >= 99 {
+			return "", err
+		}
+	}
 }
 
 // forgetPieces clears the recorded completion of this torrent's pieces, so

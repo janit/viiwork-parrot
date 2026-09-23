@@ -59,7 +59,7 @@ func (f *Fetcher) Fetch(ctx context.Context) (*Catalog, error) {
 	}
 	cached, cerr := f.loadCache()
 	if cerr != nil {
-		return nil, fmt.Errorf("fetch catalog: %v; no usable cache: %v", err, cerr)
+		return nil, fmt.Errorf("fetch catalog: %v; no usable cache: %w", err, cerr)
 	}
 	return cached, fmt.Errorf("using cached catalog: %w", err)
 }

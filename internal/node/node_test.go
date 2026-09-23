@@ -1178,3 +1178,153 @@ func TestIsDocCompanion(t *testing.T) {
 		}
 	}
 }
+
+// TestCatalogEntryChangeRestartsJob: a new catalog that keeps a torrent
+// (same infohash) but changes its entry — here its disk name — restarts the
+// job on the new entry instead of leaving it on the old disk name.
+func TestCatalogEntryChangeRestartsJob(t *testing.T) {
+	fx := newFixture(t)
+	fx.addModel("m", "m.gguf", 1<<20)
+	n := fx.node(func(n *Node) { n.cfg.Models.Want = []string{"m"} })
+	n.SetCatalog(fx.cat)
+	if st := waitState(t, n, "m", StateSeeding); st.Path != filepath.Join(n.cfg.Node.DataDir, "m.gguf") {
+		t.Fatalf("first path %s", st.Path)
+	}
+	m := fx.cat.Models[0]
+	m.Files = append([]catalog.File(nil), m.Files...)
+	m.Files[0].StoreAs = "m-renamed.gguf"
+	n.SetCatalog(&catalog.Catalog{Version: 1, Models: []catalog.Model{m}})
+	want := filepath.Join(n.cfg.Node.DataDir, "m-renamed.gguf")
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		st, _ := n.ModelStatus("m")
+		if st.State == StateSeeding && st.Path == want {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("never seeding at %s: %+v", want, st)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestPathInDir(t *testing.T) {
+	d := filepath.Join(t.TempDir(), "data")
+	for p, want := range map[string]bool{
+		filepath.Join(d, "x.gguf"):             true,
+		filepath.Join(d, "a", "b"):             true,
+		d:                                      false,
+		filepath.Join(d, ".."):                 false,
+		filepath.Join(d, "..", "x"):            false,
+		d + "2/x":                              false, // sibling sharing the prefix
+		filepath.Join(d, "a", "..", "..", "x"): false,
+	} {
+		if got := pathInDir(d, p); got != want {
+			t.Errorf("pathInDir(%q) = %v", p, got)
+		}
+	}
+}
+
+// TestPruneRefusesRecordOutsideDataDir: downloaded.json recording a file
+// outside data_dir (e.g. data_dir was changed between restarts) never gets
+// that file removed, nor a folder record's file whose relative path escapes.
+func TestPruneRefusesRecordOutsideDataDir(t *testing.T) {
+	fx := newFixture(t)
+	n := fx.node(func(n *Node) { n.cfg.Models.Prune = true })
+	outside, _ := makeFile(t, t.TempDir(), "old.gguf", 4096)
+	fi, _ := os.Stat(outside)
+	n.dl.Put(strings.Repeat("e", 40), downloadedFile{Path: outside, Size: fi.Size(), ModTime: fi.ModTime().UnixNano()})
+	n.SetCatalog(&catalog.Catalog{Version: 1})
+	if _, err := os.Stat(outside); err != nil {
+		t.Fatal("a recorded file outside data_dir was pruned")
+	}
+
+	victimDir := t.TempDir()
+	victim, _ := makeFile(t, victimDir, "v", 10)
+	rec := filepath.Join(n.cfg.Node.DataDir, "folder")
+	os.MkdirAll(rec, 0o755)
+	rel, _ := filepath.Rel(rec, victim)
+	if err := removeRecorded(downloadedFile{Path: rec, Files: map[string]fileIdentity{filepath.ToSlash(rel): {}}}); err == nil {
+		t.Error("removeRecorded accepted an escaping relative path")
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Fatal("a folder record's escaping path removed a file outside it")
+	}
+}
+
+// TestRetryAfterQuarantineDownloadsAgain: after a hash mismatch, the retry
+// (a fixed catalog) fetches the data again and seeds it, rather than
+// trusting pieces that were moved to quarantine. (forgetPieces is one
+// guard; anacrolix also finds the moved-away pieces missing on its own.)
+func TestRetryAfterQuarantineDownloadsAgain(t *testing.T) {
+	fx := newFixture(t)
+	src, sum := fx.addModel("tiny", "tiny.gguf", 1<<20)
+	good := fx.cat.Models[0]
+	bad := good
+	bad.Files = append([]catalog.File(nil), good.Files...)
+	bad.Files[0].SHA256 = strings.Repeat("0", 64)
+	n := fx.node(func(n *Node) { n.cfg.Models.Want = []string{"tiny"} })
+	n.SetCatalog(&catalog.Catalog{Version: 1, Models: []catalog.Model{bad}})
+	waitState(t, n, "tiny", StateFailed)
+	hits := fx.hfHits.Load()
+
+	n.SetCatalog(&catalog.Catalog{Version: 1, Models: []catalog.Model{good}})
+	st := waitState(t, n, "tiny", StateSeeding)
+	if fx.hfHits.Load() <= hits {
+		t.Fatal("retry did not fetch the data again")
+	}
+	want, _ := os.ReadFile(src)
+	if got, _ := os.ReadFile(st.Path); !bytes.Equal(got, want) {
+		t.Fatal("seeded file differs from the source")
+	}
+	if got, _ := hashcacheSum(st.Path); got != sum {
+		t.Fatalf("sha256 %s, want %s", got, sum)
+	}
+}
+
+// TestSlowAdoptScanDoesNotBlockStatus: the adoption scan (a walk of every
+// adopt root) runs without n.mu, so status and limits stay responsive
+// while it is slow. Swaps a package global: not parallel-safe.
+func TestSlowAdoptScanDoesNotBlockStatus(t *testing.T) {
+	fx := newFixture(t)
+	fx.addModel("tiny", "tiny.gguf", 1<<20)
+	n := fx.node(func(n *Node) { n.cfg.Models.Want = []string{"tiny"} })
+	gate, entered := make(chan struct{}), make(chan struct{}, 1)
+	testHookScanAdopt = func() {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-gate
+	}
+	t.Cleanup(func() { testHookScanAdopt = nil })
+	set := make(chan struct{})
+	go func() { n.SetCatalog(fx.cat); close(set) }()
+	waitDone(t, entered, 10*time.Second, "adopt scan")
+	got := make(chan struct{})
+	go func() { n.Status(); n.Limits(); n.ModelStatus("tiny"); close(got) }()
+	waitDone(t, got, 5*time.Second, "status during a slow adopt scan")
+	close(gate)
+	waitDone(t, set, 10*time.Second, "SetCatalog")
+	waitState(t, n, "tiny", StateSeeding)
+}
+
+// TestPruneSparesLiveJobsDataPath: a record left under an old revision's
+// infohash (not in the catalog) for the path a live job serves — as while
+// claimRecord moves it to the job's infohash — never gets that file pruned.
+func TestPruneSparesLiveJobsDataPath(t *testing.T) {
+	fx := newFixture(t)
+	fx.addModel("m", "m.gguf", 1<<20)
+	n := fx.node(func(n *Node) { n.cfg.Models.Want = []string{"m"}; n.cfg.Models.Prune = true })
+	n.SetCatalog(fx.cat)
+	st := waitState(t, n, "m", StateSeeding)
+	fi, err := os.Stat(st.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n.dl.Put(strings.Repeat("e", 40), downloadedFile{Path: st.Path, Size: fi.Size(), ModTime: fi.ModTime().UnixNano()})
+	n.SetCatalog(fx.cat)
+	if _, err := os.Stat(st.Path); err != nil {
+		t.Fatal("the file a live job seeds was pruned through a stale record")
+	}
+}

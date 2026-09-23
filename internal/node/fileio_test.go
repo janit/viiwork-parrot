@@ -74,3 +74,25 @@ func head(b []byte, n int) []byte {
 	}
 	return b
 }
+
+// A second quarantine of the same bad content (same name) must not fail or
+// replace the first: a folder model's rename would otherwise fail with
+// "file exists" and skip forgetting piece completion.
+func TestQuarantineToNeverReplaces(t *testing.T) {
+	q := t.TempDir()
+	dst := filepath.Join(q, "m.abc")
+	for i, want := range []string{dst, dst + ".1", dst + ".2"} {
+		src := filepath.Join(t.TempDir(), "d")
+		if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(src, "sub", "f"), []byte{byte(i)}, 0o644)
+		got, err := quarantineTo(src, dst)
+		if err != nil || got != want {
+			t.Fatalf("quarantine %d: got %q, %v; want %q", i, got, err, want)
+		}
+		if b, _ := os.ReadFile(filepath.Join(got, "sub", "f")); len(b) != 1 || b[0] != byte(i) {
+			t.Fatalf("quarantine %d: content %v", i, b)
+		}
+	}
+}

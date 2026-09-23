@@ -89,6 +89,11 @@ func TestValidationErrors(t *testing.T) {
 		"catalog:\n  url: ftp://x\n":                                     "catalog.url",
 		"nodez:\n  name: x\n":                                            "nodez",
 		"node:\n  data_dir: \"\"\n":                                      "node.data_dir",
+		"node:\n  state_dir: \"\"\n":                                     "node.state_dir",
+		"catalog:\n  refresh: 0s\n":                                      "catalog.refresh",
+		"limits:\n  schedule:\n    - from: \"25:00\"\n":                  "limits.schedule[0].from",
+		"limits:\n  max_conns: -1\n":                                     "limits.max_conns",
+		"api:\n  listen: 127.0.0.1\n":                                    "api.listen",
 	}
 	for in, key := range cases {
 		_, err := Parse([]byte(in))

@@ -51,11 +51,16 @@ func Build(o Options) (Result, error) {
 	if err := info.GeneratePieces(func(metainfo.FileInfo) (io.ReadCloser, error) { return os.Open(o.Path) }); err != nil {
 		return Result{}, fmt.Errorf("hashing pieces: %w", err)
 	}
+	return finish(info, o.Announce, o.WebSeed, o.Comment, o.Name)
+}
+
+// finish wraps a hashed info dict into the torrent and its magnet (the
+// one web-seed and every tracker, flattened), shared by Build and BuildDir.
+func finish(info metainfo.Info, ann [][]string, webSeed, comment, displayName string) (Result, error) {
 	infoBytes, err := bencode.Marshal(info)
 	if err != nil {
 		return Result{}, err
 	}
-	ann := o.Announce
 	if ann == nil {
 		ann = DefaultAnnounce
 	}
@@ -63,17 +68,17 @@ func Build(o Options) (Result, error) {
 		InfoBytes:    infoBytes,
 		Announce:     ann[0][0],
 		AnnounceList: ann,
-		UrlList:      metainfo.UrlList{o.WebSeed},
+		UrlList:      metainfo.UrlList{webSeed},
 		CreatedBy:    "viiwork-parrot",
 		CreationDate: time.Now().Unix(),
-		Comment:      o.Comment,
+		Comment:      comment,
 	}
 	ih := mi.HashInfoBytes()
 	var trackers []string
 	for _, tier := range ann {
 		trackers = append(trackers, tier...)
 	}
-	m := metainfo.Magnet{InfoHash: ih, DisplayName: o.Name, Trackers: trackers, Params: url.Values{"ws": {o.WebSeed}}}
+	m := metainfo.Magnet{InfoHash: ih, DisplayName: displayName, Trackers: trackers, Params: url.Values{"ws": {webSeed}}}
 	return Result{MetaInfo: mi, InfoHash: ih.HexString(), Magnet: m.String()}, nil
 }
 

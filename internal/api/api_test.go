@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -160,6 +162,57 @@ func TestRejectsNonLoopbackHost(t *testing.T) {
 	for _, h := range []string{"127.0.0.1:7950", "localhost:7950", "LOCALHOST", "[::1]:7950", "127.0.0.2"} {
 		if got := rawRequest(t, "GET", c.Base+"/status", h, "", ""); got != http.StatusOK {
 			t.Errorf("Host %q: %d, want 200", h, got)
+		}
+	}
+}
+
+func TestEnsureBadRequestsAndErrors(t *testing.T) {
+	fb := &fakeBackend{states: map[string]node.ModelStatus{}, errs: map[string]error{"io": errors.New("boom")}}
+	srv := httptest.NewServer(Handler(fb))
+	t.Cleanup(srv.Close)
+	do := func(method, path, body string) (int, string) {
+		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	for name, body := range map[string]string{
+		"empty object": `{}`,
+		"empty id":     `{"id":""}`,
+		"not json":     `not json`,
+		"oversized":    `{"id":"` + strings.Repeat("x", 1<<16) + `"}`,
+	} {
+		if code, _ := do("POST", "/ensure", body); code != http.StatusBadRequest {
+			t.Errorf("ensure %s: %d, want 400", name, code)
+		}
+	}
+	if code, body := do("POST", "/ensure", `{"id":"io"}`); code != http.StatusInternalServerError || !strings.Contains(body, "boom") {
+		t.Errorf("backend error: %d %s", code, body)
+	}
+	if code, _ := do("PUT", "/limits/override", `{"max_conns":-1}`); code != http.StatusBadRequest {
+		t.Errorf("negative max_conns: %d", code)
+	}
+	if code, _ := do("PUT", "/limits/override", `{"upload":"fast"}`); code != http.StatusBadRequest {
+		t.Errorf("bad rate: %d", code)
+	}
+	if fb.override != nil {
+		t.Error("a rejected override was applied")
+	}
+}
+
+func TestLoopbackHost(t *testing.T) {
+	for h, want := range map[string]bool{
+		"127.0.0.1:7950": true, "localhost:7950": true, "LOCALHOST": true, "[::1]:7950": true,
+		"[::ffff:127.0.0.1]:7950": true, "127.8.9.10": true,
+		"example.com:7950": false, "10.0.0.1:7950": false, "[::ffff:10.0.0.1]:1": false, "localhost.evil.com": false, "": false,
+	} {
+		if got := loopbackHost(h); got != want {
+			t.Errorf("loopbackHost(%q) = %v", h, got)
 		}
 	}
 }

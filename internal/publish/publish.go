@@ -66,6 +66,9 @@ func AddModel(ctx context.Context, o Options) (catalog.Model, error) {
 	case o.All:
 		return m, fmt.Errorf("--all is only for layout %s", catalog.LayoutDir)
 	}
+	// Nothing is written until the whole model validates, so a rejected
+	// model leaves no stray .torrent behind (as in addDirModel).
+	var built []mktorrent.Result
 	for _, hfPath := range o.Files {
 		e, ok := byPath[hfPath]
 		if !ok || e.Type != "file" {
@@ -113,17 +116,23 @@ func AddModel(ctx context.Context, o Options) (catalog.Model, error) {
 		if err != nil {
 			return m, err
 		}
-		if err := os.MkdirAll(o.TorrentsDir, 0o755); err != nil {
-			return m, err
-		}
-		if err := mktorrent.Write(filepath.Join(o.TorrentsDir, r.InfoHash+".torrent"), r.MetaInfo); err != nil {
-			return m, err
-		}
+		built = append(built, r)
 		f := catalog.File{Name: hfPath, Size: fi.Size(), SHA256: sum, InfoHash: r.InfoHash, Magnet: r.Magnet}
 		if disk != path.Base(hfPath) {
 			f.StoreAs = disk
 		}
 		m.Files = append(m.Files, f)
 	}
-	return m, catalog.Validate([]catalog.Model{m})
+	if err := catalog.Validate([]catalog.Model{m}); err != nil {
+		return m, err
+	}
+	if err := os.MkdirAll(o.TorrentsDir, 0o755); err != nil {
+		return m, err
+	}
+	for _, r := range built {
+		if err := mktorrent.Write(filepath.Join(o.TorrentsDir, r.InfoHash+".torrent"), r.MetaInfo); err != nil {
+			return m, err
+		}
+	}
+	return m, nil
 }

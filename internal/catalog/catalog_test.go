@@ -17,13 +17,19 @@ func magnet(ih, ws string) string {
 	return m
 }
 
+// sampleWS is sampleModels' web-seed for file name: the model's HF
+// resolve URL at its revision, as Validate requires.
+func sampleWS(name string) string {
+	return "https://huggingface.co/unsloth/gemma-4-31B-it-qat-GGUF/resolve/" + strings.Repeat("a", 40) + "/" + name
+}
+
 func sampleModels() []Model {
 	return []Model{{
 		ID: "gemma4-31b-qat-q4kxl", HFRepo: "unsloth/gemma-4-31B-it-qat-GGUF",
 		Revision: strings.Repeat("a", 40), License: "gemma",
 		Files: []File{
-			{Name: "LICENSE", StoreAs: "gemma4-31b-qat-q4kxl.LICENSE", Size: 10, SHA256: strings.Repeat("1", 64), InfoHash: strings.Repeat("b", 40), Magnet: magnet(strings.Repeat("b", 40), "https://huggingface.co/o/r/resolve/x/LICENSE")},
-			{Name: "gemma-4-31B-it-qat-UD-Q4_K_XL.gguf", Size: 100, SHA256: strings.Repeat("2", 64), InfoHash: strings.Repeat("c", 40), Magnet: magnet(strings.Repeat("c", 40), "https://huggingface.co/o/r/resolve/x/m.gguf")},
+			{Name: "LICENSE", StoreAs: "gemma4-31b-qat-q4kxl.LICENSE", Size: 10, SHA256: strings.Repeat("1", 64), InfoHash: strings.Repeat("b", 40), Magnet: magnet(strings.Repeat("b", 40), sampleWS("LICENSE"))},
+			{Name: "gemma-4-31B-it-qat-UD-Q4_K_XL.gguf", Size: 100, SHA256: strings.Repeat("2", 64), InfoHash: strings.Repeat("c", 40), Magnet: magnet(strings.Repeat("c", 40), sampleWS("gemma-4-31B-it-qat-UD-Q4_K_XL.gguf"))},
 		},
 	}}
 }
@@ -58,7 +64,7 @@ func TestValidate(t *testing.T) {
 		"infohash": func(m []Model) []Model { m[0].Files[0].InfoHash = "short"; return m },
 		"magnet":   func(m []Model) []Model { m[0].Files[0].Magnet = "http://x"; return m },
 		"magnet btih mismatch": func(m []Model) []Model {
-			m[0].Files[0].Magnet = magnet(strings.Repeat("f", 40), "https://huggingface.co/o/r/resolve/x/LICENSE")
+			m[0].Files[0].Magnet = magnet(strings.Repeat("f", 40), sampleWS("LICENSE"))
 			return m
 		},
 		"magnet without ws": func(m []Model) []Model { m[0].Files[0].Magnet = magnet(strings.Repeat("b", 40), ""); return m },
@@ -67,7 +73,15 @@ func TestValidate(t *testing.T) {
 			return m
 		},
 		"magnet http ws": func(m []Model) []Model {
-			m[0].Files[0].Magnet = magnet(strings.Repeat("b", 40), "http://huggingface.co/o/r/resolve/x/LICENSE")
+			m[0].Files[0].Magnet = magnet(strings.Repeat("b", 40), strings.Replace(sampleWS("LICENSE"), "https:", "http:", 1))
+			return m
+		},
+		"magnet ws off the model's repo": func(m []Model) []Model {
+			m[0].Files[0].Magnet = magnet(strings.Repeat("b", 40), "https://evil.example/LICENSE")
+			return m
+		},
+		"magnet ws at another revision": func(m []Model) []Model {
+			m[0].Files[0].Magnet = magnet(strings.Repeat("b", 40), strings.Replace(sampleWS("LICENSE"), strings.Repeat("a", 40), strings.Repeat("9", 40), 1))
 			return m
 		},
 		"size":         func(m []Model) []Model { m[0].Files[0].Size = 0; return m },
@@ -77,7 +91,7 @@ func TestValidate(t *testing.T) {
 		"duplicate sha256": func(m []Model) []Model {
 			m2 := sampleModels()[0]
 			m2.ID = "copy"
-			m2.Files = []File{{Name: "copy.gguf", Size: 100, SHA256: m[0].Files[1].SHA256, InfoHash: strings.Repeat("e", 40), Magnet: magnet(strings.Repeat("e", 40), "https://huggingface.co/o/r/resolve/x/copy.gguf")}}
+			m2.Files = []File{{Name: "copy.gguf", Size: 100, SHA256: m[0].Files[1].SHA256, InfoHash: strings.Repeat("e", 40), Magnet: magnet(strings.Repeat("e", 40), sampleWS("copy.gguf"))}}
 			return append(m, m2)
 		},
 		"duplicate disk name": func(m []Model) []Model {
@@ -118,7 +132,7 @@ func TestMagnetSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(tr, []string{"udp://tracker.example:6969/announce"}) || !reflect.DeepEqual(ws, []string{"https://huggingface.co/o/r/resolve/x/m.gguf"}) {
+	if !reflect.DeepEqual(tr, []string{"udp://tracker.example:6969/announce"}) || !reflect.DeepEqual(ws, []string{sampleWS("gemma-4-31B-it-qat-UD-Q4_K_XL.gguf")}) {
 		t.Fatalf("trackers %v web-seeds %v", tr, ws)
 	}
 	f.InfoHash = strings.Repeat("d", 40)
@@ -136,5 +150,20 @@ func TestRepoCatalogValidates(t *testing.T) {
 	}
 	if err := Validate(m); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Per-file names with ".." are refused on their own merit, not just
+// because some other field no longer matches (the web-seed follows the
+// name here).
+func TestValidateRejectsDotDotFileName(t *testing.T) {
+	for _, name := range []string{"../x.gguf", "a/../b.gguf", "/abs.gguf"} {
+		m := sampleModels()
+		m[0].Files[1].Name = name
+		m[0].Files[1].StoreAs = "x.gguf"
+		m[0].Files[1].Magnet = magnet(m[0].Files[1].InfoHash, sampleWS(name))
+		if err := Validate(m); err == nil || !strings.Contains(err.Error(), "name") {
+			t.Errorf("%q: got %v", name, err)
+		}
 	}
 }

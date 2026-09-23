@@ -58,3 +58,5 @@ func waitDone[T any](t *testing.T, ch <-chan T, d time.Duration, what string) {
 		t.Fatalf("timed out after %v waiting for %s", d, what)
 	}
 }
+
+func hashcacheSum(p string) (string, error) { return hashcache.HashFile(p) }

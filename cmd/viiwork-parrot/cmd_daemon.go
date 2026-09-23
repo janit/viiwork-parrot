@@ -121,6 +121,9 @@ func runDaemon(args []string) error {
 	)
 
 	<-ctx.Done()
+	// Restore default signal handling: a second SIGINT/SIGTERM during a slow
+	// shutdown then kills the process instead of being swallowed.
+	stop()
 	log.Info("shutting down")
 	// The loops call into n; they must be gone before the deferred n.Close.
 	waitLoops()

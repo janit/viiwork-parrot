@@ -65,6 +65,15 @@ func TestScheduleAndOverride(t *testing.T) {
 		t.Fatal("override should clear at the schedule boundary")
 	}
 
+	// A jump (suspend) from one day's rule 0 to the next day's rule 0
+	// passes the 18:00 boundary in between: the override is gone.
+	n.now = func() time.Time { return day(10) }
+	n.SetOverride(schedule.Partial{Upload: &one})
+	n.applyLimits(day(10).AddDate(0, 0, 1))
+	if n.pol.Buckets.Up.Limit() != rate.Limit(10_000_000) || n.Limits().Override != nil {
+		t.Fatal("override should clear at a boundary passed between two ticks")
+	}
+
 	n.now = func() time.Time { return day(20) }
 	n.SetOverride(schedule.Partial{Upload: &one})
 	n.ClearOverride()
@@ -158,7 +167,7 @@ func TestConnBudgetReappliedAfterTorrentSwap(t *testing.T) {
 	n.SetCatalog(fx.cat)
 	n.Start()
 	waitState(t, n, "tiny", StateSeeding)
-	time.Sleep(2500 * time.Millisecond) // let a tick land after the download->seed swap
+	n.applyLimits(n.now()) // a tick after the download->seed swap, without waiting for the 2s ticker
 
 	n.mu.Lock()
 	var j *job

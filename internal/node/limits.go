@@ -19,6 +19,7 @@ type limitsState struct {
 type override struct {
 	set  schedule.Partial
 	rule int
+	at   time.Time // when it was set
 }
 
 type rateSample struct {
@@ -115,7 +116,7 @@ func (n *Node) SetOverride(p schedule.Partial) {
 	now := n.now()
 	_, idx := n.cfg.Schedule.Effective(now)
 	n.mu.Lock()
-	n.lim.override = &override{set: p, rule: idx}
+	n.lim.override = &override{set: p, rule: idx, at: now}
 	n.mu.Unlock()
 	n.applyLimits(now)
 }
@@ -140,8 +141,17 @@ func (n *Node) applyLimits(now time.Time) {
 	defer n.applyMu.Unlock()
 	eff, idx := n.cfg.Schedule.Effective(now)
 	n.mu.Lock()
-	if o := n.lim.override; o != nil && o.rule != idx {
-		n.lim.override = nil
+	if o := n.lim.override; o != nil {
+		// Cleared at the next schedule boundary, including one passed
+		// between two ticks (suspend, clock jump) that lands back on the
+		// same rule.
+		since := n.lim.lastTick
+		if since.Before(o.at) {
+			since = o.at
+		}
+		if o.rule != idx || n.cfg.Schedule.Boundary(since, now) {
+			n.lim.override = nil
+		}
 	}
 	if o := n.lim.override; o != nil {
 		eff = o.set.Apply(eff)

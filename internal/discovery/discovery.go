@@ -12,7 +12,12 @@ import (
 	"os/exec"
 	"sort"
 	"strconv"
+	"time"
 )
+
+// tailscaleTimeout bounds one `tailscale status` call, so a wedged
+// tailscaled can't freeze discovery until shutdown.
+const tailscaleTimeout = 15 * time.Second
 
 type tsPeer struct {
 	HostName     string   `json:"HostName"`
@@ -47,6 +52,8 @@ func ParseTailscaleStatus(data []byte, port int) ([]string, error) {
 }
 
 func TailscalePeers(ctx context.Context, port int) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, tailscaleTimeout)
+	defer cancel()
 	out, err := exec.CommandContext(ctx, "tailscale", "status", "--json").Output()
 	if err != nil {
 		return nil, fmt.Errorf("tailscale status: %w", err)

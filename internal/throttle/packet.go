@@ -3,6 +3,7 @@ package throttle
 import (
 	"context"
 	"net"
+	"time"
 )
 
 // WrapPacketConn throttles uTP packets to and from non-local addresses. It is
@@ -23,16 +24,19 @@ func isUTP(b []byte) bool {
 	return len(b) >= 20 && b[0]&0x0f == 1 && b[0]>>4 <= 4
 }
 
+// ReadFrom polices inbound uTP from non-local addresses: a packet over the
+// download limit is dropped, never waited on. anacrolix reads this one
+// socket from a single goroutine that also carries LAN uTP and DHT, so
+// sleeping here would hold every one of those behind the WAN limit. uTP
+// takes the drop as loss and its congestion control slows the sender.
 func (c *packetConn) ReadFrom(b []byte) (int, net.Addr, error) {
-	n, addr, err := c.PacketConn.ReadFrom(b)
-	if n > 0 && isUTP(b[:n]) && c.p.Throttled(addr) {
-		// Delaying the read backs the kernel queue up; uTP's congestion
-		// control then slows the sender.
-		if werr := waitN(c.ctx, c.p.Buckets.Down, n); werr != nil && err == nil {
-			err = c.closedErr("read", addr)
+	for {
+		n, addr, err := c.PacketConn.ReadFrom(b)
+		if err == nil && n > 0 && isUTP(b[:n]) && c.p.Throttled(addr) && !c.p.Buckets.Down.AllowN(time.Now(), n) {
+			continue
 		}
+		return n, addr, err
 	}
-	return n, addr, err
 }
 
 func (c *packetConn) WriteTo(b []byte, addr net.Addr) (int, error) {

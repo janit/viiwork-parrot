@@ -3,6 +3,7 @@
 package hashcache
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,16 +16,34 @@ import (
 )
 
 func HashFile(path string) (string, error) {
+	return HashFileContext(context.Background(), path)
+}
+
+// HashFileContext is HashFile, abandoned with ctx's error once ctx is done:
+// a multi-GB hash must not hold up shutdown.
+func HashFileContext(ctx context.Context, path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, ctxReader{ctx, f}); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r ctxReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
 }
 
 type entry struct {
@@ -33,15 +52,22 @@ type entry struct {
 	SHA256 string `json:"sha256"`
 }
 
+// maxHashes bounds concurrent cache-miss hashes: at startup every model's
+// job hashes its candidates at once, and N multi-GB sequential reads in
+// parallel only thrash the disk.
+const maxHashes = 2
+
 type Cache struct {
 	path string
 	mu   sync.Mutex
 	m    map[string]entry
-	hash func(string) (string, error)
+	busy map[string]chan struct{} // real path -> closed when its in-flight hash ends
+	sem  chan struct{}
+	hash func(context.Context, string) (string, error)
 }
 
 func Open(path string) (*Cache, error) {
-	c := &Cache{path: path, m: map[string]entry{}, hash: HashFile}
+	c := &Cache{path: path, m: map[string]entry{}, busy: map[string]chan struct{}{}, sem: make(chan struct{}, maxHashes), hash: HashFileContext}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return c, nil
@@ -69,21 +95,62 @@ func (c *Cache) key(path string) (string, os.FileInfo, error) {
 }
 
 func (c *Cache) SHA256(path string) (string, error) {
+	return c.SHA256Context(context.Background(), path)
+}
+
+// SHA256Context is SHA256 with the hashing (if the cache misses) abandoned
+// once ctx is done.
+func (c *Cache) SHA256Context(ctx context.Context, path string) (string, error) {
 	real, fi, err := c.key(path)
 	if err != nil {
 		return "", err
 	}
-	c.mu.Lock()
-	e, ok := c.m[real]
-	c.mu.Unlock()
-	if ok && e.Size == fi.Size() && e.MTime == fi.ModTime().UnixNano() {
-		return e.SHA256, nil
+	for {
+		c.mu.Lock()
+		e, ok := c.m[real]
+		if ok && e.Size == fi.Size() && e.MTime == fi.ModTime().UnixNano() {
+			c.mu.Unlock()
+			return e.SHA256, nil
+		}
+		// One hash per file at a time: a second caller waits for the
+		// first and then finds its result cached (or hashes itself if the
+		// first failed).
+		if ch, busy := c.busy[real]; busy {
+			c.mu.Unlock()
+			select {
+			case <-ch:
+				continue
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+		ch := make(chan struct{})
+		c.busy[real] = ch
+		c.mu.Unlock()
+		sum, err := c.hashLimited(ctx, real)
+		var serr error
+		if err == nil {
+			serr = c.store(real, fi, sum) // in memory before waiters wake
+		}
+		c.mu.Lock()
+		delete(c.busy, real)
+		close(ch)
+		c.mu.Unlock()
+		if err != nil {
+			return "", err
+		}
+		return sum, serr
 	}
-	sum, err := c.hash(real)
-	if err != nil {
-		return "", err
+}
+
+func (c *Cache) hashLimited(ctx context.Context, real string) (string, error) {
+	select {
+	case c.sem <- struct{}{}:
+	case <-ctx.Done():
+		return "", ctx.Err()
 	}
-	return sum, c.store(real, fi, sum)
+	defer func() { <-c.sem }()
+	return c.hash(ctx, real)
 }
 
 func (c *Cache) Put(path, sha string) error {

@@ -92,3 +92,15 @@ func TestDiskName(t *testing.T) {
 		t.Fatal("DiskName")
 	}
 }
+
+// A model that fails catalog validation writes no .torrent at all.
+func TestAddModelInvalidWritesNothing(t *testing.T) {
+	o, _ := setup(t, "")
+	o.LicenseURL = "http://example.com/license"
+	if _, err := AddModel(context.Background(), o); err == nil || !strings.Contains(err.Error(), "license_url") {
+		t.Fatalf("expected license_url rejection, got %v", err)
+	}
+	if ents, _ := os.ReadDir(o.TorrentsDir); len(ents) != 0 {
+		t.Fatalf("rejected model left torrents behind: %v", ents)
+	}
+}

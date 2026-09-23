@@ -83,6 +83,26 @@ func (s Schedule) Effective(t time.Time) (Limits, int) {
 	return s.Base, -1
 }
 
+// Boundary reports whether the matching rule changes at some minute in
+// (a, b] — even if the rule matching at b is again the one matching at a,
+// as after a suspend across whole days. The scan stops after eight days:
+// the schedule repeats weekly, so any boundary shows up by then.
+func (s Schedule) Boundary(a, b time.Time) bool {
+	if !b.After(a) {
+		return false
+	}
+	if lim := a.Add(8 * 24 * time.Hour); b.After(lim) {
+		b = lim
+	}
+	_, i0 := s.Effective(a)
+	for t := a.Truncate(time.Minute).Add(time.Minute); !t.After(b); t = t.Add(time.Minute) {
+		if _, i := s.Effective(t); i != i0 {
+			return true
+		}
+	}
+	return false
+}
+
 var dayNames = map[string]time.Weekday{
 	"sun": time.Sunday, "mon": time.Monday, "tue": time.Tuesday, "wed": time.Wednesday,
 	"thu": time.Thursday, "fri": time.Friday, "sat": time.Saturday,

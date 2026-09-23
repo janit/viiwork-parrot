@@ -3,6 +3,7 @@ package node
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -183,6 +184,9 @@ func removeRecorded(rec downloadedFile) error {
 	dirs := map[string]bool{rec.Path: true}
 	for rel := range rec.Files {
 		p := filepath.Join(rec.Path, filepath.FromSlash(rel))
+		if !pathInDir(rec.Path, p) {
+			return fmt.Errorf("recorded file %q escapes %s; refusing to remove it", rel, rec.Path)
+		}
 		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.2.2 — 2026-09-23
+
+> **Stricter catalog validation.** A per-file model's magnet web-seed must
+> now be exactly `https://huggingface.co/<hf_repo>/resolve/<revision>/<name>`,
+> as a folder model's already had to be its repo's resolve URL. Nodes
+> refuse a catalog that breaks this (they keep their cached one). Every
+> catalog `mktorrent` has produced complies, including the current one.
+
+### Fixes
+
+- **Faster, cleaner shutdown.** Hashing a file (adoption, verifying a
+  download) stops when its job is stopped, instead of running to the end of
+  a possibly 100+ GB file while shutdown or a catalog update waits. A second
+  SIGINT/SIGTERM during shutdown now kills the daemon.
+- **A slow adopt scan no longer stalls the API.** Walking `models.adopt`
+  roots and viiwork configs happens without the node lock, so `/status`,
+  `/ensure` and limit changes answer while it runs.
+- **Throttled uTP no longer holds back LAN peers and DHT.** Inbound uTP from
+  a non-local peer over the download limit is dropped (uTP backs off on the
+  loss) rather than waited on inside the single UDP reader that LAN uTP and
+  DHT share.
+- **At most two files are hashed at once**, and a file two jobs want to
+  check is hashed once, so a first start with many models doesn't thrash
+  the disk.
+- **A changed catalog entry restarts its job.** When a new catalog keeps a
+  torrent (same infohash) but changes its disk name, trackers, web-seed or
+  owning model, the job restarts on the new entry instead of carrying on
+  with the old one (two torrents could otherwise write the same file).
+- **A runtime `limit` override also ends at a schedule boundary passed
+  while suspended** (or across a clock jump), even when the same rule
+  matches again afterwards.
+- **Quarantine never fails or overwrites on a repeat.** The same bad
+  download quarantined twice goes to `<name>.<sha>.1`, `.2`, …; for a
+  folder model a repeat used to fail the quarantine itself.
+- **`/ensure` racing a catalog refresh that drops the model** answers 404
+  instead of an empty 202 that a caller would poll forever.
+- **Prune is safer.** It never removes a file a running job serves through
+  a stale record of an older revision, and it refuses a recorded folder
+  file whose path escapes the folder.
+- **A folder torrent listing a path twice in place of a catalog file** is
+  refused before download (only the file count was compared).
+- **`tailscale status` is bounded to 15s**, so a hung `tailscaled` can't
+  freeze tailnet peer discovery.
+- **`mktorrent` validates a per-file model before writing any `.torrent`**,
+  so a rejected model leaves nothing behind (folder models already did).
+
 ## v0.2.1 — 2026-09-21
 
 ### Fixes

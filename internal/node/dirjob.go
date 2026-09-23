@@ -68,6 +68,9 @@ func checkDirInfo(mi *metainfo.MetaInfo, m *catalog.Model) error {
 		if !ok || size != f.Length {
 			return fmt.Errorf("torrent %s: file %q (%d bytes) does not match the catalog", m.InfoHash, p, f.Length)
 		}
+		// Each catalog path once: with a duplicate, the count check above
+		// would pass while some catalog file is missing from the torrent.
+		delete(want, p)
 	}
 	return nil
 }
@@ -95,7 +98,7 @@ func (j *job) verifyDir(root string) (mismatch bool, err error) {
 			return false, err
 		}
 		p := filepath.Join(root, filepath.FromSlash(f.Name))
-		sum, err := j.n.hashes.SHA256(p)
+		sum, err := j.n.hashes.SHA256Context(j.ctx, p)
 		if err != nil {
 			if sum == "" {
 				return false, err
@@ -264,7 +267,7 @@ func (j *job) finishDir(pieces int) {
 	sums := make(map[string]string, len(j.dir.Files))
 	for _, f := range j.dir.Files {
 		p := filepath.Join(incoming, filepath.FromSlash(f.Name))
-		sum, err := hashcache.HashFile(p)
+		sum, err := hashcache.HashFileContext(j.ctx, p)
 		if err != nil {
 			j.fail(err)
 			return
@@ -417,8 +420,8 @@ func (j *job) quarantineDir(f catalog.File, got string, pieces int) {
 		j.fail(fmt.Errorf("%w; quarantine failed: %v", base, err))
 		return
 	}
-	dst := filepath.Join(q, fmt.Sprintf("%s.%s", j.f.DiskName(), got[:12]))
-	if err := renameNoReplace(j.incomingPath(), dst); err != nil {
+	dst, err := quarantineTo(j.incomingPath(), filepath.Join(q, fmt.Sprintf("%s.%s", j.f.DiskName(), got[:12])))
+	if err != nil {
 		j.fail(fmt.Errorf("%w; quarantine failed: %v", base, err))
 		return
 	}

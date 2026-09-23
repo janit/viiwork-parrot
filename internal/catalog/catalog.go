@@ -212,8 +212,8 @@ func Validate(models []Model) error {
 			if len(ws) != 1 {
 				return fmt.Errorf("%s: magnet must carry exactly one ws (web-seed), has %d", fk, len(ws))
 			}
-			if u, err := url.Parse(ws[0]); err != nil || u.Scheme != "https" || u.Host == "" {
-				return fmt.Errorf("%s: magnet ws %q must be an https URL", fk, ws[0])
+			if want := DirWebSeed(m.HFRepo) + m.Revision + "/" + f.Name; ws[0] != want {
+				return fmt.Errorf("%s: magnet ws %q must be %q", fk, ws[0], want)
 			}
 			if other, dup := disk[f.DiskName()]; dup {
 				return fmt.Errorf("%s: disk name %q already used by %s; set store_as", fk, f.DiskName(), other)

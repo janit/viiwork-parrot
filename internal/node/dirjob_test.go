@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
+
 	"github.com/janit/viiwork-parrot/internal/catalog"
 	"github.com/janit/viiwork-parrot/internal/hashcache"
 	"github.com/janit/viiwork-parrot/internal/mktorrent"
@@ -631,5 +634,33 @@ func TestDirReplacesOwnPerFileDownload(t *testing.T) {
 	n2.SetCatalog(fx2.cat)
 	if st := waitState(t, n2, "tiny-dir", StateFailed); !strings.Contains(st.Error, "left untouched") {
 		t.Fatal(st.Error)
+	}
+}
+
+// checkDirInfo refuses a torrent whose file list differs from the catalog's
+// in any way: a wrong size, or a duplicated path standing in for a missing
+// file (same count, so only a per-path check catches it).
+func TestCheckDirInfoRejectsMismatches(t *testing.T) {
+	fx := newFixture(t)
+	fx.addDirModel("tiny-dir", rev1, dirFiles)
+	m := fx.cat.Models[0]
+	mi := fx.src[m.InfoHash]
+
+	m.Files = append([]catalog.File(nil), m.Files...)
+	m.Files[0].Size++
+	if err := checkDirInfo(mi, &m); err == nil {
+		t.Fatal("size mismatch must fail")
+	}
+
+	m = fx.cat.Models[0]
+	info, _ := mi.UnmarshalInfo()
+	info.Files[1] = info.Files[0] // same count, file 1 missing, file 0 twice
+	ib, err := bencode.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dup := &metainfo.MetaInfo{InfoBytes: ib}
+	if err := checkDirInfo(dup, &m); err == nil {
+		t.Fatal("a duplicated path in place of a catalog file must fail")
 	}
 }

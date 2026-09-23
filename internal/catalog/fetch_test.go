@@ -3,6 +3,7 @@ package catalog
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -158,5 +159,63 @@ func TestFetchRejectsRollback(t *testing.T) {
 	fs.mu.Unlock()
 	if c, err := f.Fetch(context.Background()); err != nil || c.Models[0].License != "same-time" {
 		t.Fatalf("same-generation catalog should be accepted: %v %+v", err, c)
+	}
+}
+
+// A cache file altered on disk (body changed, signature line kept) or
+// signed by another key is never used, even when the tracker is down.
+func TestFetchRejectsTamperedCache(t *testing.T) {
+	_, srv, pub := signedServer(t)
+	cacheDir := t.TempDir()
+	f := &Fetcher{URL: srv.URL + "/v/catalog.json", PubKey: pub, CacheDir: cacheDir, HTTP: srv.Client()}
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(cacheDir, "catalog.cache")
+	good, _ := os.ReadFile(cache)
+	down := &Fetcher{URL: srv.URL + "/gone/catalog.json", PubKey: pub, CacheDir: cacheDir, HTTP: srv.Client()}
+
+	os.WriteFile(cache, bytes.Replace(good, []byte("gemma"), []byte("evil!"), 1), 0o644)
+	if c, err := down.Fetch(context.Background()); c != nil || !errors.Is(err, ErrBadSignature) {
+		t.Fatalf("altered cache: got %v, %v", c, err)
+	}
+
+	_, priv2, _ := GenerateKey()
+	body := good[bytes.IndexByte(good, '\n')+1:]
+	sig2, _ := Sign(priv2, body)
+	os.WriteFile(cache, append(append(sig2, '\n'), body...), 0o644)
+	if c, err := down.Fetch(context.Background()); c != nil || !errors.Is(err, ErrBadSignature) {
+		t.Fatalf("cache signed by another key: got %v, %v", c, err)
+	}
+}
+
+// Oversized or missing catalog/.sig responses fail and fall back to the cache.
+func TestFetchSizeLimitsAndMissingSig(t *testing.T) {
+	fs, srv, pub := signedServer(t)
+	f := &Fetcher{URL: srv.URL + "/v/catalog.json", PubKey: pub, CacheDir: t.TempDir(), HTTP: srv.Client()}
+	if _, err := f.Fetch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for name, mut := range map[string]func(){
+		"sig missing":   func() { delete(fs.files, "/v/catalog.json.sig") },
+		"sig oversized": func() { fs.files["/v/catalog.json.sig"] = bytes.Repeat([]byte("A"), 4097) },
+		"catalog oversized": func() {
+			fs.files["/v/catalog.json"] = bytes.Repeat([]byte(" "), 32<<20+1)
+		},
+	} {
+		fs.mu.Lock()
+		saved := map[string][]byte{}
+		for k, v := range fs.files {
+			saved[k] = v
+		}
+		mut()
+		fs.mu.Unlock()
+		c, err := f.Fetch(context.Background())
+		if err == nil || c == nil || len(c.Models) != 1 {
+			t.Errorf("%s: want cached catalog with error, got %v, %v", name, c, err)
+		}
+		fs.mu.Lock()
+		fs.files = saved
+		fs.mu.Unlock()
 	}
 }

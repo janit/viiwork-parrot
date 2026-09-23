@@ -4,15 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
-	"github.com/anacrolix/torrent/bencode"
 	"github.com/anacrolix/torrent/metainfo"
 )
 
@@ -86,34 +83,11 @@ func BuildDir(o DirOptions) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("hashing pieces: %w", err)
 	}
-	infoBytes, err := bencode.Marshal(info)
-	if err != nil {
-		return Result{}, err
-	}
-	ann := o.Announce
-	if ann == nil {
-		ann = DefaultAnnounce
-	}
-	mi := &metainfo.MetaInfo{
-		InfoBytes:    infoBytes,
-		Announce:     ann[0][0],
-		AnnounceList: ann,
-		UrlList:      metainfo.UrlList{o.WebSeed},
-		CreatedBy:    "viiwork-parrot",
-		CreationDate: time.Now().Unix(),
-		Comment:      o.Comment,
-	}
-	ih := mi.HashInfoBytes()
-	var trackers []string
-	for _, tier := range ann {
-		trackers = append(trackers, tier...)
-	}
 	dn := o.DisplayName
 	if dn == "" {
 		dn = o.Name
 	}
-	m := metainfo.Magnet{InfoHash: ih, DisplayName: dn, Trackers: trackers, Params: url.Values{"ws": {o.WebSeed}}}
-	return Result{MetaInfo: mi, InfoHash: ih.HexString(), Magnet: m.String()}, nil
+	return finish(info, o.Announce, o.WebSeed, o.Comment, dn)
 }
 
 type teeCloser struct {

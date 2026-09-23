@@ -104,3 +104,36 @@ func TestPacketConnLocalBypass(t *testing.T) {
 		t.Fatal("local uTP must not be throttled")
 	}
 }
+
+// Inbound uTP from a non-local peer over the download limit is dropped
+// rather than waited on, so the single reader keeps delivering everything
+// else (here: DHT packets queued behind it) without delay.
+func TestPacketConnPolicesUTPReads(t *testing.T) {
+	bk := NewBuckets()
+	bk.Set(0, 1) // download effectively stalled after the 64KiB burst
+	lm, _ := NewLocalMatcher(nil)
+	a, b := udpPair(t, &Policy{Buckets: bk, Local: lm})
+	for i := 0; i < 100; i++ { // 140KB of uTP: well past the burst
+		b.WriteTo(utpPacket(1400), a.LocalAddr())
+	}
+	b.WriteTo([]byte("d1:q4:pinge"), a.LocalAddr())
+	a.SetReadDeadline(time.Now().Add(2 * time.Second))
+	buf := make([]byte, 2048)
+	utp, start := 0, time.Now()
+	for {
+		n, _, err := a.ReadFrom(buf)
+		if err != nil {
+			t.Fatalf("after %d uTP packets: %v", utp, err)
+		}
+		if !isUTP(buf[:n]) {
+			break
+		}
+		utp++
+	}
+	if d := time.Since(start); d > 500*time.Millisecond {
+		t.Fatalf("DHT packet delayed %v behind throttled uTP", d)
+	}
+	if utp == 0 || utp >= 100 {
+		t.Fatalf("%d of 100 uTP packets passed; want the burst's worth, the rest dropped", utp)
+	}
+}

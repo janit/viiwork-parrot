@@ -204,7 +204,22 @@ func (n *Node) SetCatalog(c *catalog.Catalog) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.cat = c
-	n.reconcileLocked(true)
+	n.reconcileScanLocked(true)
+}
+
+// reconcileScanLocked is reconcileLocked, with the adoption scan (a
+// filesystem walk of every adopt root, possibly slow) done without n.mu
+// held, so /status, /ensure and the limits loop don't stall behind it.
+// Every step of reconcileLocked is idempotent, so running it again on
+// whatever changed meanwhile is safe. n.mu is held on entry and on return.
+func (n *Node) reconcileScanLocked(retryFailed bool) {
+	if !n.reconcileLocked(retryFailed, nil) {
+		return
+	}
+	n.mu.Unlock()
+	idx := n.scanAdopt()
+	n.mu.Lock()
+	n.reconcileLocked(retryFailed, idx)
 }
 
 func (n *Node) wantedLocked(id string) bool {
@@ -246,12 +261,18 @@ func (n *Node) retireLocked(ih string, j *job, prune bool) {
 
 // reconcileLocked starts/stops jobs to match the catalog and want list.
 // retryFailed (catalog updates) also restarts failed jobs that are still
-// wanted.
-func (n *Node) reconcileLocked(retryFailed bool) {
+// wanted. New jobs need the adoption index: with adoptIdx nil and a job to
+// start, it starts none and reports true so the caller can scan without
+// n.mu held and call again.
+func (n *Node) reconcileLocked(retryFailed bool, adoptIdx *adoptIndex) (needScan bool) {
 	if n.cat == nil || n.closed {
-		return
+		return false
 	}
-	keep := map[string]bool{}
+	type unit struct {
+		model string
+		f     catalog.File
+	}
+	keep := map[string]unit{}
 	inCatalog := map[string]bool{}
 	for _, m := range n.cat.Models {
 		for _, f := range units(m) {
@@ -261,13 +282,20 @@ func (n *Node) reconcileLocked(retryFailed bool) {
 			continue
 		}
 		for _, f := range units(m) {
-			keep[f.InfoHash] = true
+			keep[f.InfoHash] = unit{m.ID, f}
 		}
 	}
 	for ih, j := range n.jobs {
+		u, kept := keep[ih]
 		switch {
-		case !keep[ih]:
+		case !kept:
 			n.retireLocked(ih, j, n.cfg.Models.Prune && !inCatalog[ih])
+		case u.model != j.model || u.f != j.f:
+			// Same torrent, new catalog entry (disk name, trackers,
+			// web-seed or owning model changed): restart it (below) on the
+			// new entry, or it would keep writing to its old disk name —
+			// perhaps one another torrent now uses.
+			n.retireLocked(ih, j, false)
 		case retryFailed && j.failed():
 			// Still wanted: restart it (below) so a cleared obstacle or a
 			// transient error doesn't need a daemon restart.
@@ -279,7 +307,14 @@ func (n *Node) reconcileLocked(retryFailed bool) {
 	// waiting on this sweep to be removed, and a job that hashed the stale
 	// file first would fail "left untouched" instead of downloading fresh.
 	n.pruneRecordedLocked(inCatalog)
-	var adoptIdx *adoptIndex
+	if adoptIdx == nil {
+		for ih := range keep {
+			if n.jobs[ih] == nil {
+				return true
+			}
+		}
+		return false
+	}
 	for _, m := range n.cat.Models {
 		if !n.wantedLocked(m.ID) {
 			continue
@@ -287,9 +322,6 @@ func (n *Node) reconcileLocked(retryFailed bool) {
 		for _, f := range units(m) {
 			if _, ok := n.jobs[f.InfoHash]; ok {
 				continue
-			}
-			if adoptIdx == nil {
-				adoptIdx = n.scanAdopt()
 			}
 			candidates := adoptIdx.files[f.Size]
 			if m.IsDir() {
@@ -313,6 +345,7 @@ func (n *Node) reconcileLocked(retryFailed bool) {
 			}()
 		}
 	}
+	return false
 }
 
 // pruneRecordedLocked removes files viiwork-parrot downloaded (recorded in
@@ -327,8 +360,16 @@ func (n *Node) pruneRecordedLocked(inCatalog map[string]bool) {
 	if !n.cfg.Models.Prune {
 		return
 	}
+	// A live job's data path is that job's to verify, claim or replace
+	// (claimRecord moves a record from an old revision's infohash to the
+	// job's own outside n.mu; promote replaces a stale own download), so
+	// a record for that path is never pruned from under it.
+	live := map[string]bool{}
+	for _, j := range n.jobs {
+		live[j.dataPath()] = true
+	}
 	for ih, rec := range n.dl.All() {
-		if inCatalog[ih] || n.jobs[ih] != nil || n.stopping[ih] != nil {
+		if inCatalog[ih] || n.jobs[ih] != nil || n.stopping[ih] != nil || live[rec.Path] {
 			continue
 		}
 		if !pathInDir(n.cfg.Node.DataDir, rec.Path) {
@@ -378,7 +419,14 @@ type adoptIndex struct {
 // Every directory met (the roots included, hidden ones skipped, symlinks to
 // directories taken as-is) and every viiwork model path that is a directory
 // is a folder-model candidate. findLocal/findLocalDir dedupe by inode.
+// testHookScanAdopt, if set (tests only), runs at the start of every
+// adoption scan.
+var testHookScanAdopt func()
+
 func (n *Node) scanAdopt() *adoptIndex {
+	if testHookScanAdopt != nil {
+		testHookScanAdopt()
+	}
 	idx := &adoptIndex{files: map[int64][]string{}}
 	add := func(p string) {
 		fi, err := os.Stat(p)
@@ -479,10 +527,14 @@ func (n *Node) Ensure(id string) (ModelStatus, error) {
 	}
 	if !n.wantedLocked(id) {
 		n.extraWant[id] = true
-		n.reconcileLocked(false)
+		n.reconcileScanLocked(false)
 	}
 	n.mu.Unlock()
-	st, _ := n.ModelStatus(id)
+	st, ok := n.ModelStatus(id)
+	if !ok {
+		// A catalog refresh dropped the model since the check above.
+		return ModelStatus{}, ErrUnknownModel
+	}
 	if st.NoSpace {
 		return st, ErrNoSpace
 	}

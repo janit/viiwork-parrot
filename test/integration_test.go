@@ -72,6 +72,9 @@ func newWorld(t *testing.T) *world {
 	prevTLS := dt.TLSClientConfig
 	dt.TLSClientConfig = w.hf.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 	t.Cleanup(func() { dt.TLSClientConfig = prevTLS })
+	// The catalog requires every web-seed to be the model's real HF URL,
+	// so all nodes reach the fake HF server as huggingface.co.
+	w.dialHF(t)
 	return w
 }
 
@@ -82,8 +85,9 @@ func (w *world) add(id string, size int, serve string) {
 	src := filepath.Join(w.t.TempDir(), id+".gguf")
 	os.WriteFile(src, data, 0o644)
 	sum, _ := hashcache.HashFile(src)
+	hfPath := "/o/" + id + "/resolve/" + strings.Repeat("a", 40) + "/" + id + ".gguf"
 	r, err := mktorrent.Build(mktorrent.Options{
-		Path: src, Name: id + ".gguf", WebSeed: w.hf.URL + "/" + id + ".gguf",
+		Path: src, Name: id + ".gguf", WebSeed: "https://huggingface.co" + hfPath,
 		Announce: [][]string{{"http://127.0.0.1:1/announce"}},
 	})
 	if err != nil {
@@ -91,13 +95,13 @@ func (w *world) add(id string, size int, serve string) {
 	}
 	switch serve {
 	case "ok":
-		w.hfFiles["/"+id+".gguf"] = data
+		w.hfFiles[hfPath] = data
 	case "tampered":
 		bad := append([]byte(nil), data...)
 		for i := 0; i < len(bad); i += 4096 {
 			bad[i] ^= 0xff
 		}
-		w.hfFiles["/"+id+".gguf"] = bad
+		w.hfFiles[hfPath] = bad
 	}
 	var buf bytes.Buffer
 	r.MetaInfo.Write(&buf)
@@ -275,7 +279,6 @@ func TestEndToEnd(t *testing.T) {
 	})
 
 	t.Run("folder model web-seed download via ensure", func(t *testing.T) {
-		w.dialHF(t)
 		tn := w.node(t, nil, nil, 0, nil)
 		waitSeeding(t, tn, "folder", 60*time.Second)
 		resp, code, err := tn.api.Ensure(context.Background(), "folder")
@@ -367,11 +370,11 @@ func TestEndToEnd(t *testing.T) {
 			}
 			progressed := st.State == node.StateDownloading || st.State == node.StateVerifying ||
 				(len(st.Files) > 0 && st.Files[0].Done > 0)
-			if progressed && w.hfRequests("/bad.gguf") > 0 {
+			if progressed && w.hfRequests("/o/bad/resolve/"+strings.Repeat("a", 40)+"/bad.gguf") > 0 {
 				break
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("bad: no download progress within 20s (state=%s, hf requests=%d)", st.State, w.hfRequests("/bad.gguf"))
+				t.Fatalf("bad: no download progress within 20s (state=%s, hf requests=%d)", st.State, w.hfRequests("/o/bad/resolve/"+strings.Repeat("a", 40)+"/bad.gguf"))
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
