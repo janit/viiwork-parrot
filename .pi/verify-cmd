@@ -1,0 +1,4 @@
+# The fast gate: gofmt clean, go vet, unit tests (make test) and the
+# integration tests (make itest, no network needed). third_party/ is its own
+# module and is not checked here.
+test -z "$(gofmt -l cmd internal test)" && go vet ./... && go test ./... && go test -tags=integration -count=1 ./test/...
